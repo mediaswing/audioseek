@@ -120,6 +120,35 @@ pub mod test_server {
         format!("http://{addr}")
     }
 
+    /// Serves the response given for each path asked for, such as
+    /// "/feed.xml", and 404 Not Found for any other, to as many connections
+    /// as come, one at a time. Returns the server's address.
+    pub fn serve_paths(routes: Vec<(&str, Vec<u8>)>) -> String {
+        let routes: Vec<(String, Vec<u8>)> = routes.into_iter().map(|(p, r)| (p.to_owned(), r)).collect();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
+                // "GET /path HTTP/1.1"
+                let request = String::from_utf8_lossy(&request);
+                let path = request.split_whitespace().nth(1).unwrap_or("");
+                let not_found = response("404 Not Found", &[], b"");
+                let reply = routes.iter().find(|(p, _)| p == path).map_or(&not_found, |(_, r)| r);
+                let _ = stream.write_all(reply);
+            }
+        });
+        format!("http://{addr}")
+    }
+
     /// A response with `status`, such as "200 OK", the headers given, and
     /// `body`, whose length it gives unless the headers do.
     pub fn response(status: &str, headers: &[&str], body: &[u8]) -> Vec<u8> {

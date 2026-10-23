@@ -89,17 +89,17 @@ pub(super) fn text_field(ui: &mut Ui, id: Id, label: &str, value: &mut String, e
 /// box; Space, Enter or Alt+Down (Option+Down on a Mac) opens the list, and
 /// Alt+Up or Escape closes it. Returns the response, and whether the choice
 /// changed.
-pub(super) fn dropdown(
+pub(super) fn dropdown<S: AsRef<str>>(
     ui: &mut Ui,
     id_salt: &str,
     label: &str,
-    options: &[String],
+    options: &[S],
     selected: &mut usize,
     enabled: bool,
 ) -> (egui::Response, bool) {
     let label_resp = ui.label(label);
     let mut changed = false;
-    let current = options.get(*selected).cloned().unwrap_or_default();
+    let current = options.get(*selected).map_or("", |o| o.as_ref()).to_owned();
     let inner = ui.add_enabled_ui(enabled, |ui| {
         egui::ComboBox::from_id_salt(id_salt)
             .width(ui.available_width())
@@ -109,7 +109,7 @@ pub(super) fn dropdown(
                 for (i, option) in options.iter().enumerate() {
                     let resp = ui.add_sized(
                         [ui.available_width(), CONTROL_HEIGHT],
-                        Button::selectable(i == *selected, option.as_str()),
+                        Button::selectable(i == *selected, option.as_ref()),
                     );
                     if resp.clicked() {
                         *selected = i;
@@ -156,7 +156,7 @@ pub(super) fn dropdown(
             ui.ctx().request_repaint();
         }
     }
-    let value = options.get(*selected).cloned().unwrap_or_default();
+    let value = options.get(*selected).map_or("", |o| o.as_ref()).to_owned();
     ui.ctx().accesskit_node_builder(resp.id, |node| {
         node.set_role(Role::ComboBox);
         node.set_value(value);

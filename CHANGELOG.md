@@ -12,6 +12,8 @@
 
 - Pressing Escape (or whichever key Cancel uses) now asks before stopping a fetch or download. The Cancel button still stops it straight away.
 - Fetching every feed saves `feeds.json` once at the end, rather than after each feed, so the window no longer stutters while a long list is fetched.
+- Feeds are fetched six at a time, so fetching a long list is several times quicker, and one slow server no longer holds up the rest.
+- The Episodes tab does much less work each time the window is redrawn, and downloads update the progress bar at most ten times a second, so a podcast with thousands of episodes stays responsive while downloading. Every episode is still in the list for screen readers.
 - Web addresses in the log have passwords, keys and query strings taken out, so it is safe to attach to a bug report even with private feeds.
 - A download folder must be a full path; a relative one is refused with a message.
 - The Ubuntu package depends on `zenity`, which shows the app's questions and messages on Linux.

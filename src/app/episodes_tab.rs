@@ -14,8 +14,7 @@ impl PodApp {
     /// The episodes whose titles match the filter.
     fn shown_episodes(&self) -> Vec<&Episode> {
         let Some((_, Some(podcast))) = self.current_podcast() else { return Vec::new() };
-        let filter = self.filter.trim().to_lowercase();
-        podcast.episodes.iter().filter(|e| filter.is_empty() || e.title.to_lowercase().contains(&filter)).collect()
+        matching(podcast, &self.filter).collect()
     }
 
     fn ticked_here(&mut self) -> Option<&mut HashSet<String>> {
@@ -134,7 +133,7 @@ impl PodApp {
             self.drop_episode_focus();
             return;
         }
-        let names: Vec<String> = self.library.feeds.iter().map(|f| f.name().to_owned()).collect();
+        let names: Vec<&str> = self.library.feeds.iter().map(|f| f.name()).collect();
         let mut chosen = self.selected.min(names.len() - 1);
         let label = format!("Podcast{}", self.keymap.hint(Action::PodcastPicker));
         let (resp, changed) = dropdown(ui, "podcast", &label, &names, &mut chosen, true);
@@ -149,7 +148,6 @@ impl PodApp {
         let Some((feed, podcast)) = self.current_podcast() else { return };
         let fetched = feed.fetched_text();
         let disabled = feed.disabled;
-        let downloaded = feed.downloaded.clone();
         let error = self.fetch_errors.get(&feed.url).cloned();
         let Some(podcast) = podcast else {
             let text = match error {
@@ -167,16 +165,16 @@ impl PodApp {
             return;
         };
         let total = podcast.episodes.len();
-        let done_here = podcast.episodes.iter().filter(|e| downloaded.contains(&e.id)).count();
+        let done_here = podcast.episodes.iter().filter(|e| feed.downloaded.contains(&e.id)).count();
         ui.label(format!("{}, {done_here} downloaded. This feed was {fetched}.", plural(total, "episode")));
 
         let label = format!("Filter by title{}", self.keymap.hint(Action::Filter));
         let resp = text_field(ui, field_id(Target::Filter), &label, &mut self.filter, true);
         self.focus_if_wanted(Target::Filter, &resp);
 
-        let shown: Vec<Episode> = self.shown_episodes().into_iter().cloned().collect();
+        let any =
+            self.current_podcast().and_then(|(_, p)| p).is_some_and(|p| matching(p, &self.filter).next().is_some());
         let ticked_count = self.ticked_here().map_or(0, |t| t.len());
-        let any = !shown.is_empty();
         if full_button(ui, &format!("Tick every episode shown{}", self.keymap.hint(Action::SelectAll)), any).clicked() {
             self.tick_shown();
         }
@@ -207,6 +205,20 @@ impl PodApp {
 
         ui.add_space(6.0);
         heading(ui, &format!("Episode list{}", self.keymap.hint(Action::EpisodeList)));
+        // Out of the map while the list is drawn, so its rows can borrow
+        // their episodes while the rest of the app changes, rather than
+        // every episode being copied every frame.
+        let url = self.library.feeds[self.selected].url.clone();
+        let Some(podcast) = self.podcasts.remove(&url) else { return };
+        self.episode_list(ui, &url, &podcast);
+        self.podcasts.insert(url, podcast);
+    }
+
+    /// The episodes matching the filter, each with a box to tick. Every row
+    /// is drawn, even those scrolled out of sight, so screen readers can
+    /// reach them all.
+    fn episode_list(&mut self, ui: &mut Ui, url: &str, podcast: &Podcast) {
+        let shown: Vec<&Episode> = matching(podcast, &self.filter).collect();
         if shown.is_empty() {
             ui.label("No episode titles match the filter.");
             self.drop_episode_focus();
@@ -223,10 +235,9 @@ impl PodApp {
         // Where focus goes for the list's shortcut: the row last used, or
         // the first.
         let focus_row = self.episode_focus.as_ref().and_then(|id| shown.iter().position(|e| &e.id == id)).unwrap_or(0);
-        let url = self.library.feeds[self.selected].url.clone();
         for (i, episode) in shown.iter().enumerate() {
-            let mut on = self.ticked.get(&url).is_some_and(|t| t.contains(&episode.id));
-            let text = episode_line(episode, downloaded.contains(&episode.id));
+            let mut on = self.ticked.get(url).is_some_and(|t| t.contains(&episode.id));
+            let text = episode_line(episode, self.library.feeds[self.selected].downloaded.contains(&episode.id));
             let resp = ui.push_id(("episode", &episode.id), |ui| ui.checkbox(&mut on, text)).inner;
             if i == focus_row {
                 self.focus_if_wanted(Target::EpisodeList, &resp);
@@ -235,7 +246,7 @@ impl PodApp {
                 self.episode_focus = Some(episode.id.clone());
             }
             if resp.changed() {
-                let ticked = self.ticked.entry(url.clone()).or_default();
+                let ticked = self.ticked.entry(url.to_owned()).or_default();
                 if on {
                     ticked.insert(episode.id.clone());
                 } else {
@@ -260,6 +271,12 @@ impl PodApp {
         self.last_shown = Some((self.selected, count));
         changed
     }
+}
+
+/// The podcast's episodes whose titles contain `filter`, ignoring case.
+fn matching<'a>(podcast: &'a Podcast, filter: &str) -> impl Iterator<Item = &'a Episode> {
+    let filter = filter.trim().to_lowercase();
+    podcast.episodes.iter().filter(move |e| filter.is_empty() || e.title.to_lowercase().contains(&filter))
 }
 
 /// An episode's line in the list: title, when it came out in local time,

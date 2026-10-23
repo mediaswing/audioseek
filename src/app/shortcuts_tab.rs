@@ -15,7 +15,7 @@ impl PodApp {
     /// take a key from somewhere else.
     pub(super) fn shortcuts_tab(&mut self, ui: &mut Ui) {
         heading(ui, "Keyboard shortcuts");
-        let options = vec!["On".to_owned(), "Off".to_owned()];
+        let options = ["On", "Off"];
         let mut index = usize::from(!self.settings.shortcuts_enabled());
         let (_, changed) = dropdown(ui, "shortcuts_on", "Use keyboard shortcuts", &options, &mut index, true);
         if changed {

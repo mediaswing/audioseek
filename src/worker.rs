@@ -6,8 +6,12 @@ use crate::library::{Feed, Library};
 use crate::settings::{Naming, Settings};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
+
+/// The least time between progress messages while an episode downloads.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 pub enum Msg {
     /// A feed has been fetched and read, or couldn't be.
@@ -103,28 +107,44 @@ impl Reporter {
     }
 }
 
-/// Fetches each feed in turn.
+/// How many feeds are fetched at once. Enough that one slow server doesn't
+/// hold up the rest, and few enough to be polite to hosts with many feeds.
+const FETCHERS: usize = 6;
+
+/// Fetches the feeds, a few at once, in the order given. Each is reported
+/// as it finishes, so not necessarily in that order.
 pub fn refresh(rep: Reporter, urls: Vec<String>, cancel: Arc<AtomicBool>) {
-    let (mut fetched, mut failed) = (0, 0);
-    let count = urls.len().max(1);
-    for (i, url) in urls.into_iter().enumerate() {
-        if cancel.load(Ordering::Relaxed) {
-            rep.send(Msg::RefreshDone { fetched, failed, cancelled: true });
-            return;
+    let count = urls.len();
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let fetched = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..FETCHERS.min(count) {
+            let (rep, urls, cancel, next, done, fetched) = (rep.clone(), &urls, &cancel, &next, &done, &fetched);
+            let fetcher = move || {
+                while !cancel.load(Ordering::Relaxed) {
+                    let Some(url) = urls.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
+                    let result = crate::net::fetch_text(url).and_then(|text| crate::feed::parse(&text)).map_err(|e| {
+                        log::warn!("{url}: {e:#}");
+                        format!("{e:#}")
+                    });
+                    if result.is_ok() {
+                        fetched.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    rep.send(Msg::FeedFetched(url.clone(), result));
+                    rep.send(Msg::Progress(finished as f32 / count as f32));
+                }
+            };
+            // A thread that can't start crashes the job, which says so.
+            std::thread::Builder::new()
+                .name(Job::Fetch.thread_name().to_owned())
+                .spawn_scoped(scope, fetcher)
+                .expect("could not start a thread to fetch feeds");
         }
-        let result = crate::net::fetch_text(&url).and_then(|text| crate::feed::parse(&text)).map_err(|e| {
-            log::warn!("{url}: {e:#}");
-            format!("{e:#}")
-        });
-        if result.is_ok() {
-            fetched += 1
-        } else {
-            failed += 1
-        }
-        rep.send(Msg::FeedFetched(url, result));
-        rep.send(Msg::Progress((i + 1) as f32 / count as f32));
-    }
-    rep.send(Msg::RefreshDone { fetched, failed, cancelled: false });
+    });
+    let (done, fetched) = (done.into_inner(), fetched.into_inner());
+    rep.send(Msg::RefreshDone { fetched, failed: done - fetched, cancelled: done < count });
 }
 
 /// Asks GitHub whether there is a newer version.
@@ -219,16 +239,19 @@ pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc
             Outcome::AlreadyThere(path)
         } else {
             let mut last_percent = -1i32;
+            let mut last_sent = Instant::now();
             let result =
                 path.parent().map(std::fs::create_dir_all).transpose().map_err(anyhow::Error::from).and_then(|_| {
                     crate::net::download(&item.episode.url, &path, &cancel, |got, total| {
                         let Some(total) = total.filter(|t| *t > 0) else { return };
                         let part = (got as f64 / total as f64).min(1.0);
                         let overall = (i as f64 + part) / count as f64;
-                        // Only as often as the bar visibly moves.
+                        // Only as often as the bar visibly moves, and at most
+                        // ten times a second, as each redraws the window.
                         let percent = (overall * 1000.0) as i32;
-                        if percent != last_percent {
+                        if percent != last_percent && last_sent.elapsed() >= PROGRESS_INTERVAL {
                             last_percent = percent;
+                            last_sent = Instant::now();
                             rep.send(Msg::Progress(overall as f32));
                         }
                     })
@@ -254,7 +277,7 @@ pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::test_server::{ok, response, serve};
+    use crate::net::test_server::{ok, response, serve, serve_paths};
     use std::sync::mpsc::channel;
 
     fn episode(id: &str, title: &str, date: &str, url: &str) -> Episode {
@@ -329,6 +352,60 @@ mod tests {
         }
         assert!(matches!(&outcomes[2], (id, Outcome::Failed(_)) if id == "3"));
         assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2, "nothing saved for the failed one");
+    }
+
+    /// Every message `work` sends, once it has finished.
+    fn messages(work: impl FnOnce(Reporter)) -> Vec<Msg> {
+        let (tx, rx) = channel();
+        work(Reporter::new(tx, egui::Context::default()));
+        rx.try_iter().collect()
+    }
+
+    #[test]
+    fn refreshing_fetches_every_feed() {
+        let rss = |title: &str| {
+            let xml = format!(
+                r#"<rss><channel><title>{title}</title><item><title>One</title><enclosure url="https://x/1.mp3"/></item></channel></rss>"#
+            );
+            ok(xml.as_bytes())
+        };
+        // More feeds than fetchers, two of them missing.
+        let routes: Vec<(String, Vec<u8>)> =
+            (0..10).filter(|i| i % 5 != 4).map(|i| (format!("/{i}"), rss(&format!("Show {i}")))).collect();
+        let server = serve_paths(routes.iter().map(|(p, r)| (p.as_str(), r.clone())).collect());
+        let urls: Vec<String> = (0..10).map(|i| format!("{server}/{i}")).collect();
+        let msgs = messages(|rep| refresh(rep, urls.clone(), Arc::new(AtomicBool::new(false))));
+
+        let mut results: Vec<(String, bool)> = msgs
+            .iter()
+            .filter_map(|m| match m {
+                Msg::FeedFetched(url, result) => Some((url.clone(), result.is_ok())),
+                _ => None,
+            })
+            .collect();
+        results.sort();
+        let mut expected: Vec<(String, bool)> = (0..10).map(|i| (format!("{server}/{i}"), i % 5 != 4)).collect();
+        expected.sort();
+        assert_eq!(results, expected, "each feed once, the missing ones failed");
+        assert!(matches!(msgs.last(), Some(Msg::RefreshDone { fetched: 8, failed: 2, cancelled: false })));
+        let progress: Vec<f32> =
+            msgs.iter().filter_map(|m| if let Msg::Progress(p) = m { Some(*p) } else { None }).collect();
+        assert_eq!(progress.len(), 10);
+        assert_eq!(progress.iter().cloned().fold(0.0, f32::max), 1.0);
+    }
+
+    #[test]
+    fn a_cancelled_refresh_says_so() {
+        let msgs =
+            messages(|rep| refresh(rep, vec!["http://127.0.0.1:9/feed".into()], Arc::new(AtomicBool::new(true))));
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(msgs[0], Msg::RefreshDone { fetched: 0, failed: 0, cancelled: true }));
+    }
+
+    #[test]
+    fn refreshing_nothing_finishes() {
+        let msgs = messages(|rep| refresh(rep, Vec::new(), Arc::new(AtomicBool::new(false))));
+        assert!(matches!(msgs[..], [Msg::RefreshDone { fetched: 0, failed: 0, cancelled: false }]));
     }
 
     #[test]

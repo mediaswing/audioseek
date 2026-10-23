@@ -106,7 +106,7 @@ impl PodApp {
             self.open_download_folder();
         }
 
-        let names: Vec<String> = Naming::ALL.iter().map(|n| n.label().to_owned()).collect();
+        let names = Naming::ALL.map(Naming::label);
         let mut chosen = Naming::ALL.iter().position(|n| *n == self.settings.naming).unwrap_or(0);
         let label = format!("File names{}", self.keymap.hint(Action::Naming));
         let (resp, changed) = dropdown(ui, "naming", &label, &names, &mut chosen, true);
