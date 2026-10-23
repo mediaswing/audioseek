@@ -14,7 +14,7 @@ impl PodApp {
         };
         self.folder_input = dir.display().to_string();
         self.settings.download_dir = dir;
-        self.settings.save();
+        self.save_settings();
         self.announce(format!("Episodes will be saved in {}.", self.folder_input));
         self.focus = Some(Target::FolderField);
     }
@@ -39,7 +39,7 @@ impl PodApp {
         }
         self.checking_for_update = true;
         self.announce("Checking for a newer version…");
-        self.rep.spawn(|rep| worker::check_for_update(rep, true));
+        self.rep.spawn(worker::Job::UpdateCheck, |rep| worker::check_for_update(rep, true));
     }
 
     pub(super) fn update_checked(&mut self, result: Result<Option<String>, String>, asked: bool) {
@@ -78,12 +78,22 @@ impl PodApp {
         let resp = text_field(ui, field_id(Target::FolderField), &label, &mut self.folder_input, true);
         self.focus_if_wanted(Target::FolderField, &resp);
         if resp.lost_focus() {
-            let typed = self.folder_input.trim();
+            let typed = self.folder_input.trim().to_owned();
             if typed.is_empty() {
                 self.folder_input = self.settings.download_dir.display().to_string();
-            } else if std::path::Path::new(typed) != self.settings.download_dir {
-                self.settings.download_dir = typed.into();
-                self.settings.save();
+            } else if !std::path::Path::new(&typed).is_absolute() {
+                // A relative folder would depend on how the app was started.
+                self.folder_input = self.settings.download_dir.display().to_string();
+                self.show_error(format!(
+                    "{typed} is not a full path to a folder, so the download folder is still {}. Type the whole \
+                     path, or choose the folder{}.",
+                    self.folder_input,
+                    self.keymap.hint(Action::Browse)
+                ));
+                self.focus = Some(Target::FolderField);
+            } else if std::path::Path::new(&typed) != self.settings.download_dir {
+                self.settings.download_dir = (&typed).into();
+                self.save_settings();
                 self.announce(format!("Episodes will be saved in {typed}."));
             }
         }
@@ -101,7 +111,7 @@ impl PodApp {
         self.focus_if_wanted(Target::Naming, &resp);
         if changed {
             self.settings.naming = Naming::ALL[chosen];
-            self.settings.save();
+            self.save_settings();
         }
         ui.label("Dates and times are when each episode was published, in this computer's time zone.");
 
@@ -109,7 +119,7 @@ impl PodApp {
         let resp = ui.checkbox(&mut self.settings.folder_per_podcast, label);
         self.focus_if_wanted(Target::FolderPerPodcast, &resp);
         if resp.changed() {
-            self.settings.save();
+            self.save_settings();
         }
 
         ui.add_space(6.0);
@@ -143,7 +153,7 @@ impl PodApp {
             self.check_for_update();
         }
         if ui.checkbox(&mut self.settings.check_for_updates, "Check for a newer version when the app starts").changed() {
-            self.settings.save();
+            self.save_settings();
         }
     }
 }

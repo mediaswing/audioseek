@@ -57,6 +57,10 @@ pub struct Library {
     /// saved over, so the feeds in it aren't lost.
     #[serde(skip)]
     pub load_error: Option<String>,
+    /// Something the user should be told about loading the file that
+    /// doesn't stop it being saved, such as it being damaged and put aside.
+    #[serde(skip)]
+    pub load_notice: Option<String>,
 }
 
 impl Library {
@@ -69,8 +73,27 @@ impl Library {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
                 // Keep the damaged file rather than overwrite it on the next save.
                 log::warn!("could not read {}: {e}", path.display());
-                let _ = std::fs::rename(path, path.with_extension("json.damaged"));
-                Library::default()
+                match crate::paths::back_up_damaged(path) {
+                    Ok(backup) => Library {
+                        load_notice: Some(format!(
+                            "The list of feeds in {} was damaged ({e}), so the app has started with an empty \
+                             list. The damaged file has been kept as {}.",
+                            path.display(),
+                            backup.display()
+                        )),
+                        ..Library::default()
+                    },
+                    // Not moved, so saving would lose it.
+                    Err(move_error) => Library {
+                        load_error: Some(format!(
+                            "The list of feeds in {} is damaged ({e}) and could not be put aside \
+                             ({move_error}). It has been left as it is, and changes to the list won't be saved \
+                             until the app is started again.",
+                            path.display()
+                        )),
+                        ..Library::default()
+                    },
+                }
             }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Library::default(),
             Err(e) => {
@@ -174,6 +197,20 @@ mod tests {
         lib.feeds.push(Feed::new("https://example.com/feed".into(), String::new(), String::new()));
         assert!(lib.save_to(&blocked).is_err());
         assert!(blocked.is_dir());
+    }
+
+    #[test]
+    fn damaged_file_is_kept_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        std::fs::write(&path, b"{ not json").unwrap();
+        let lib = Library::load_from(&path);
+        assert!(lib.load_error.is_none(), "a fresh list can be saved");
+        assert!(lib.load_notice.is_some(), "the user is told");
+        assert!(!path.exists());
+        let kept: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].to_string_lossy().starts_with("feeds.json.damaged-"));
     }
 
     #[test]

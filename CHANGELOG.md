@@ -11,6 +11,18 @@
 ### Changed
 
 - Pressing Escape (or whichever key Cancel uses) now asks before stopping a fetch or download. The Cancel button still stops it straight away.
+- Fetching every feed saves `feeds.json` once at the end, rather than after each feed, so the window no longer stutters while a long list is fetched.
+- Web addresses in the log have passwords, keys and query strings taken out, so it is safe to attach to a bug report even with private feeds.
+- A download folder must be a full path; a relative one is refused with a message.
+- The Ubuntu package depends on `zenity`, which shows the app's questions and messages on Linux.
+
+### Fixed
+
+- If fetching or downloading crashes, the app now says so and can be used again, instead of waiting for the job for ever.
+- A damaged `feeds.json` or `settings.json` is kept under a dated name, and the app says so when it starts, rather than starting empty without a word. A `settings.json` that can't be read (locked, say) is no longer saved over.
+- A failure to save the settings is now reported.
+- On Linux without zenity, Remove, Download all and Escape now say that they couldn't ask first, rather than doing nothing silently.
+- Messages say "1 feed", "1 episode" and "1 was already in the folder" rather than "1 feeds" and the like.
 
 ## [1.0.0] - 2026-10-23
 

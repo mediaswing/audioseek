@@ -34,6 +34,11 @@ use widgets::*;
 
 const CONTROL_HEIGHT: f32 = 36.0;
 
+/// "1 feed" or "3 feeds".
+fn plural(n: usize, noun: &str) -> String {
+    if n == 1 { format!("1 {noun}") } else { format!("{n} {noun}s") }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tab {
     Feeds,
@@ -141,17 +146,21 @@ impl PodApp {
         let keymap = Keymap::new(settings.shortcuts_enabled(), &settings.shortcuts, Platform::CURRENT);
         let mut status = match library.feeds.len() {
             0 => format!("Ready. Import an OPML file to begin{}.", keymap.hint(Action::ImportOpml)),
-            1 => "Ready. 1 feed.".to_owned(),
-            n => format!("Ready. {n} feeds."),
+            n => format!("Ready. {}.", plural(n, "feed")),
         };
         if let Some(help) = keymap.active(Action::Help) {
             status.push_str(&format!(" {} lists the shortcuts.", help.short(keymap.platform())));
         }
         let rep = Reporter::new(tx, cc.egui_ctx.clone());
         if settings.check_for_updates {
-            rep.spawn(|rep| worker::check_for_update(rep, false));
+            rep.spawn(worker::Job::UpdateCheck, |rep| worker::check_for_update(rep, false));
         }
-        let load_error = library.load_error.clone();
+        // Problems loading the files, worst first.
+        let problems: Vec<String> = [&library.load_error, &settings.load_error, &library.load_notice, &settings.load_notice]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
         let mut app = Self {
             folder_input: settings.download_dir.display().to_string(),
             checking_for_update: settings.check_for_updates,
@@ -177,8 +186,8 @@ impl PodApp {
             tab_buttons: Vec::new(),
             new_version: None,
         };
-        if let Some(e) = load_error {
-            app.show_error(e);
+        if !problems.is_empty() {
+            app.show_error(problems.join("\n\n"));
         }
         app
     }
@@ -209,13 +218,21 @@ impl PodApp {
             .show();
     }
 
-    fn confirm(&self, text: &str) -> bool {
+    fn confirm(&mut self, text: &str) -> bool {
         let answer = rfd::MessageDialog::new()
             .set_title(APP_TITLE)
             .set_description(text)
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Info)
             .show();
+        // On Linux the question is asked with the zenity program, and a
+        // Yes/No question only comes back Cancel when it couldn't be run.
+        if cfg!(all(unix, not(target_os = "macos"))) && answer == rfd::MessageDialogResult::Cancel {
+            self.announce(
+                "Could not ask a question in a dialog, so nothing was done. Installing the zenity package fixes this.",
+            );
+            return false;
+        }
         answer == rfd::MessageDialogResult::Yes
     }
 
@@ -227,6 +244,17 @@ impl PodApp {
         }
         if let Err(e) = self.library.save() {
             self.show_error(format!("Could not save the list of feeds: {e}"));
+        }
+    }
+
+    fn save_settings(&mut self) {
+        // The user was told at startup that they can't be saved.
+        if self.settings.load_error.is_some() {
+            log::warn!("not saving the settings, which couldn't be read");
+            return;
+        }
+        if let Err(e) = self.settings.save() {
+            self.show_error(format!("Could not save the settings: {e}"));
         }
     }
 
@@ -285,8 +313,8 @@ impl PodApp {
         }
         let count = urls.len();
         let cancel = self.start_job(JobKind::Fetching, count);
-        self.announce(if count == 1 { "Fetching 1 feed…".to_owned() } else { format!("Fetching {count} feeds…") });
-        self.rep.spawn(move |rep| worker::refresh(rep, urls, cancel));
+        self.announce(format!("Fetching {}…", plural(count, "feed")));
+        self.rep.spawn(worker::Job::Fetch, move |rep| worker::refresh(rep, urls, cancel));
     }
 
     fn handle_messages(&mut self) {
@@ -295,10 +323,9 @@ impl PodApp {
                 Msg::FeedFetched(url, result) => self.feed_fetched(url, result),
                 Msg::RefreshDone { fetched, failed, cancelled } => {
                     self.job = None;
-                    let mut text = match fetched {
-                        1 => "Fetched 1 feed.".to_owned(),
-                        n => format!("Fetched {n} feeds."),
-                    };
+                    // Saved once for the whole refresh, not once a feed.
+                    self.save_library();
+                    let mut text = format!("Fetched {}.", plural(fetched, "feed"));
                     if failed > 0 {
                         text.push_str(&format!(" {failed} could not be fetched; the feed list says which."));
                     }
@@ -319,6 +346,7 @@ impl PodApp {
                 Msg::DownloadsDone { cancelled } => self.downloads_done(cancelled),
                 Msg::Progress(p) => self.progress = p.clamp(0.0, 1.0),
                 Msg::UpdateChecked { result, asked } => self.update_checked(result, asked),
+                Msg::Crashed(job) => self.job_crashed(job),
             }
         }
     }
@@ -337,7 +365,6 @@ impl PodApp {
                 feed.last_fetched = Some(chrono::Utc::now());
                 self.fetch_errors.remove(&url);
                 self.podcasts.insert(url, podcast);
-                self.save_library();
             }
             Err(e) => {
                 self.fetch_errors.insert(url, e);
@@ -378,14 +405,35 @@ impl PodApp {
         }
     }
 
+    /// A job crashed, so it won't say it has finished. What it did before
+    /// then has been kept.
+    fn job_crashed(&mut self, job: worker::Job) {
+        let log = crate::paths::log_file();
+        match job {
+            worker::Job::UpdateCheck => {
+                self.checking_for_update = false;
+                self.announce(format!("The check for a newer version stopped with an error. {} has the details.", log.display()));
+            }
+            worker::Job::Fetch | worker::Job::Download => {
+                self.job = None;
+                self.save_library();
+                let what = if job == worker::Job::Fetch { "Fetching feeds" } else { "Downloading" };
+                self.show_error(format!(
+                    "{what} stopped with an error. Anything finished before then has been kept. The log file, {}, \
+                     has the details.",
+                    log.display()
+                ));
+            }
+        }
+    }
+
     fn downloads_done(&mut self, cancelled: bool) {
         let Some(job) = self.job.take() else { return };
-        let mut text = match job.saved {
-            1 => "Downloaded 1 episode.".to_owned(),
-            n => format!("Downloaded {n} episodes."),
-        };
-        if job.already > 0 {
-            text.push_str(&format!(" {} were already in the folder.", job.already));
+        let mut text = format!("Downloaded {}.", plural(job.saved, "episode"));
+        match job.already {
+            0 => {}
+            1 => text.push_str(" 1 was already in the folder."),
+            n => text.push_str(&format!(" {n} were already in the folder.")),
         }
         if cancelled {
             text = format!("Cancelled. {text}");
@@ -494,7 +542,7 @@ impl PodApp {
             Action::Naming => self.focus = Some(Target::Naming),
             Action::FolderPerPodcast => {
                 self.settings.folder_per_podcast = !self.settings.folder_per_podcast;
-                self.settings.save();
+                self.save_settings();
                 self.focus = Some(Target::FolderPerPodcast);
                 self.announce(if self.settings.folder_per_podcast {
                     "Each podcast gets its own folder."

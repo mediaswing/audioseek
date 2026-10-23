@@ -34,7 +34,7 @@ impl log::Log for Logger {
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
             record.level(),
             record.target(),
-            record.args()
+            redact_urls(&record.args().to_string())
         );
         if cfg!(debug_assertions) {
             eprint!("{line}");
@@ -49,6 +49,47 @@ impl log::Log for Logger {
             let _ = file.flush();
         }
     }
+}
+
+/// Web addresses in `text` with anything that might be a password or key
+/// taken out, as people attach the log to bug reports and private feeds
+/// carry keys in their addresses: the user name and password, the query
+/// and fragment, and any part of the path at least 20 characters long with
+/// a digit in it, such as `/feeds/3f9a…`. What's left still says which
+/// feed or file it was.
+fn redact_urls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("http://").into_iter().chain(rest.find("https://")).min() {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let end = tail.find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>')).unwrap_or(tail.len());
+        // Punctuation after an address, as in "could not fetch <url>: …",
+        // belongs to the sentence.
+        let url_len = tail[..end].trim_end_matches(['.', ',', ':', ';', ')']).len();
+        let (url, after) = tail.split_at(url_len);
+        out.push_str(&redact_url(url));
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn redact_url(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let hidden = rest.find(['?', '#']).is_some();
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let path: Vec<&str> = path
+        .split('/')
+        .map(|part| if part.len() >= 20 && part.contains(|c: char| c.is_ascii_digit()) { "…" } else { part })
+        .collect();
+    let mut out = format!("{scheme}://{host}{}", path.join("/"));
+    if hidden {
+        out.push_str("?…");
+    }
+    out
 }
 
 /// Starts writing the log, and logs any crash before it happens. If the log
@@ -79,4 +120,28 @@ pub fn init() {
     }));
 
     log::info!("audioseek {} started on {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_urls;
+
+    #[test]
+    fn keys_are_kept_out_of_the_log() {
+        assert_eq!(
+            redact_urls("could not fetch https://www.patreon.com/rss/show?auth=abc123: 404"),
+            "could not fetch https://www.patreon.com/rss/show?…: 404"
+        );
+        assert_eq!(
+            redact_urls("https://show.supercast.com/feeds/a8f3b2c19d7e4f6a0b1c2d3e4f5a6b7c x"),
+            "https://show.supercast.com/feeds/… x"
+        );
+        assert_eq!(redact_urls("http://me:secret@example.com/feed.xml"), "http://example.com/feed.xml");
+        // Ordinary addresses, several to a line, are left alone.
+        assert_eq!(
+            redact_urls("a https://feeds.simplecast.com/54nAGcIl and http://b.example/ep/1.mp3."),
+            "a https://feeds.simplecast.com/54nAGcIl and http://b.example/ep/1.mp3."
+        );
+        assert_eq!(redact_urls("no address here"), "no address here");
+    }
 }

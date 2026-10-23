@@ -38,8 +38,10 @@ pub fn fetch_text(url: &str) -> anyhow::Result<String> {
         .read_to_vec()
         .with_context(|| format!("could not read {url}"))?;
     // Feeds are nearly always UTF-8; anything else loses only odd characters.
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(text.trim_start_matches('\u{feff}').to_owned())
+    let mut text = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    let bom = text.len() - text.trim_start_matches('\u{feff}').len();
+    text.drain(..bom);
+    Ok(text)
 }
 
 /// Downloads `url` to `dest`, calling `progress` with the bytes received

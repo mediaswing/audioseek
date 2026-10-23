@@ -27,8 +27,7 @@ impl PodApp {
         let n = self.ticked_here().map_or(0, |t| t.len());
         self.announce(match n {
             0 => "No episodes ticked.".to_owned(),
-            1 => "1 episode ticked.".to_owned(),
-            n => format!("{n} episodes ticked."),
+            n => format!("{} ticked.", plural(n, "episode")),
         });
     }
 
@@ -105,8 +104,8 @@ impl PodApp {
         let Some((feed, Some(podcast))) = self.current_podcast() else { return };
         let episodes = podcast.episodes.clone();
         let question = format!(
-            "Download all {} episodes of {} to {}? Episodes already in the folder are skipped.",
-            episodes.len(),
+            "Download {} of {} to {}? Episodes already in the folder are skipped.",
+            if episodes.len() == 1 { "the 1 episode".to_owned() } else { format!("all {} episodes", episodes.len()) },
             feed.name(),
             self.settings.download_dir.display()
         );
@@ -135,8 +134,8 @@ impl PodApp {
         let count = items.len();
         let target = DownloadTarget::from(&self.settings);
         let cancel = self.start_job(JobKind::Downloading, count);
-        self.announce(format!("Downloading {count} episode{}…", if count == 1 { "" } else { "s" }));
-        self.rep.spawn(move |rep| worker::download(rep, items, target, cancel));
+        self.announce(format!("Downloading {}…", plural(count, "episode")));
+        self.rep.spawn(worker::Job::Download, move |rep| worker::download(rep, items, target, cancel));
     }
 
     pub(super) fn episodes_tab(&mut self, ui: &mut Ui) {
@@ -181,7 +180,7 @@ impl PodApp {
         };
         let total = podcast.episodes.len();
         let done_here = podcast.episodes.iter().filter(|e| downloaded.contains(&e.id)).count();
-        ui.label(format!("{total} episodes, {done_here} downloaded. This feed was {fetched}."));
+        ui.label(format!("{}, {done_here} downloaded. This feed was {fetched}.", plural(total, "episode")));
 
         let label = format!("Filter by title{}", self.keymap.hint(Action::Filter));
         let resp = text_field(ui, field_id(Target::Filter), &label, &mut self.filter, true);
@@ -210,7 +209,10 @@ impl PodApp {
         if full_button(ui, &label, ticked_count > 0 && !busy).clicked() {
             self.download_ticked();
         }
-        let label = format!("Download all {total} episodes{}", self.keymap.hint(Action::DownloadAll));
+        let label = match total {
+            1 => format!("Download the 1 episode{}", self.keymap.hint(Action::DownloadAll)),
+            n => format!("Download all {n} episodes{}", self.keymap.hint(Action::DownloadAll)),
+        };
         if full_button(ui, &label, total > 0 && !busy).clicked() {
             self.download_all();
         }
@@ -223,7 +225,7 @@ impl PodApp {
             return;
         }
         if self.shown_count_changed(shown.len()) && !self.filter.trim().is_empty() {
-            self.announce(format!("{} episodes match.", shown.len()));
+            self.announce(format!("{} {}.", plural(shown.len(), "episode"), if shown.len() == 1 { "matches" } else { "match" }));
         }
         ui.label("Space ticks or unticks an episode. Arrow keys move through the list.");
         // Where focus goes for the list's shortcut: the row last used, or

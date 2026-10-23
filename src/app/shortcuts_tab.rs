@@ -7,7 +7,7 @@ impl PodApp {
     /// Builds the keymap again from the settings, and saves them.
     fn set_shortcuts(&mut self) {
         self.keymap = Keymap::new(self.settings.shortcuts_enabled(), &self.settings.shortcuts, Platform::CURRENT);
-        self.settings.save();
+        self.save_settings();
     }
 
     /// Each list offers only shortcuts that pass the conflict checks in

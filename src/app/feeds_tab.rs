@@ -34,7 +34,7 @@ impl PodApp {
         // The feeds just added, each once, even if the file lists one twice.
         let new_urls: Vec<String> = self.library.feeds[before..].iter().map(|f| f.url.clone()).collect();
         self.save_library();
-        let mut text = format!("Imported {added} new feed{} from {found} in the file.", if added == 1 { "" } else { "s" });
+        let mut text = format!("Imported {} from {found} in the file.", plural(added, "new feed"));
         if added > 0 && !self.is_busy() {
             text.push_str(" Fetching them now.");
         }
@@ -59,7 +59,7 @@ impl PodApp {
             return;
         };
         match crate::paths::write_atomic(&path, crate::opml::export(&self.library.feeds).as_bytes()) {
-            Ok(()) => self.announce(format!("Exported {} feeds to {}.", self.library.feeds.len(), path.display())),
+            Ok(()) => self.announce(format!("Exported {} to {}.", plural(self.library.feeds.len(), "feed"), path.display())),
             Err(e) => self.show_error(format!("Could not save {}: {e}", path.display())),
         }
     }
@@ -148,8 +148,7 @@ impl PodApp {
             line.push_str(", disabled");
         }
         if let Some(podcast) = self.podcasts.get(&feed.url) {
-            let n = podcast.episodes.len();
-            line.push_str(&format!(", {n} episode{}", if n == 1 { "" } else { "s" }));
+            line.push_str(&format!(", {}", plural(podcast.episodes.len(), "episode")));
         }
         if !feed.downloaded.is_empty() {
             line.push_str(&format!(", {} downloaded", feed.downloaded.len()));

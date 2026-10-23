@@ -24,6 +24,28 @@ pub enum Msg {
     /// `asked` says whether the user asked, rather than it being the check
     /// made at startup.
     UpdateChecked { result: Result<Option<String>, String>, asked: bool },
+    /// A job stopped part way through with a crash (logged with the
+    /// details), so it will send nothing more.
+    Crashed(Job),
+}
+
+/// The kinds of work done away from the window, which are also the names
+/// of their threads, as the log gives them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Job {
+    Fetch,
+    Download,
+    UpdateCheck,
+}
+
+impl Job {
+    fn thread_name(self) -> &'static str {
+        match self {
+            Job::Fetch => "fetch",
+            Job::Download => "download",
+            Job::UpdateCheck => "update check",
+        }
+    }
 }
 
 pub enum Outcome {
@@ -49,9 +71,21 @@ impl Reporter {
         self.ctx.request_repaint();
     }
 
-    pub fn spawn(&self, job: impl FnOnce(Reporter) + Send + 'static) {
+    /// Runs `work` on a thread of its own. If it crashes, the window is
+    /// sent `Msg::Crashed`, so it doesn't wait for the job for ever.
+    pub fn spawn(&self, job: Job, work: impl FnOnce(Reporter) + Send + 'static) {
         let rep = self.clone();
-        std::thread::spawn(move || job(rep));
+        let spawned = std::thread::Builder::new().name(job.thread_name().to_owned()).spawn(move || {
+            let worker = rep.clone();
+            // The panic hook in `logging.rs` has already logged what happened.
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(worker))).is_err() {
+                rep.send(Msg::Crashed(job));
+            }
+        });
+        if let Err(e) = spawned {
+            log::error!("could not start the {} thread: {e}", job.thread_name());
+            self.send(Msg::Crashed(job));
+        }
     }
 }
 
