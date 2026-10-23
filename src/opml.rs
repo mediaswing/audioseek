@@ -2,9 +2,10 @@
 //! writing the list back out as one.
 
 use crate::library::Feed;
+use crate::text::attr;
 use anyhow::{Context, bail};
 use quick_xml::escape::escape;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 
 /// Every outline with an `xmlUrl`, however deeply nested in folders.
 pub fn parse(xml: &str) -> anyhow::Result<Vec<Feed>> {
@@ -53,11 +54,6 @@ pub fn export(feeds: &[Feed]) -> String {
     }
     out.push_str("  </body>\n</opml>\n");
     out
-}
-
-fn attr(e: &BytesStart, name: &str) -> Option<String> {
-    let a = e.try_get_attribute(name).ok()??;
-    Some(a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok()?.into_owned())
 }
 
 #[cfg(test)]

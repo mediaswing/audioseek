@@ -143,7 +143,7 @@ pub fn sanitize(text: &str) -> String {
             c => c,
         })
         .collect();
-    let mut name: String = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut name = crate::text::collapse_whitespace(&cleaned);
     let mut end = 0;
     for (count, (i, c)) in name.char_indices().enumerate() {
         if count == MAX_CHARS || i + c.len_utf8() > MAX_BYTES {

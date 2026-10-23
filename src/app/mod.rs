@@ -355,14 +355,7 @@ impl PodApp {
         let Some(i) = self.library.find(&url) else { return };
         match result {
             Ok(podcast) => {
-                let feed = &mut self.library.feeds[i];
-                if feed.title.trim().is_empty() && !podcast.title.is_empty() {
-                    feed.title = podcast.title.clone();
-                }
-                if feed.website.is_empty() {
-                    feed.website = podcast.website.clone();
-                }
-                feed.last_fetched = Some(chrono::Utc::now());
+                self.library.feeds[i].fetched(&podcast, chrono::Utc::now());
                 self.fetch_errors.remove(&url);
                 self.podcasts.insert(url, podcast);
             }
@@ -399,10 +392,7 @@ impl PodApp {
         if let Some(path) = saved_to
             && let Some(i) = self.library.find(&feed_url)
         {
-            let feed = &mut self.library.feeds[i];
-            feed.downloaded.insert(episode_id.clone());
-            // So the name stays this episode's. See `naming::file_names`.
-            feed.files.insert(episode_id.clone(), path.to_string_lossy().into_owned());
+            self.library.feeds[i].mark_downloaded(&episode_id, &path);
             if let Some(ticked) = self.ticked.get_mut(&feed_url) {
                 ticked.remove(&episode_id);
             }

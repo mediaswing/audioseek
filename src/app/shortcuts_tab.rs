@@ -29,14 +29,9 @@ impl PodApp {
         }
 
         let platform = self.keymap.platform();
-        for (place, title) in [
-            (shortcuts::Place::Anywhere, "Anywhere"),
-            (shortcuts::Place::Feeds, "Feeds tab"),
-            (shortcuts::Place::Episodes, "Episodes tab"),
-            (shortcuts::Place::Settings, "Settings tab"),
-        ] {
+        for place in shortcuts::Place::ALL {
             ui.add_space(6.0);
-            heading(ui, title);
+            heading(ui, place.heading());
             for action in Action::ALL.into_iter().filter(|a| a.place() == place) {
                 let choices: Vec<Shortcut> = action
                     .choices(platform)

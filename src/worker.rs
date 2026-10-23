@@ -2,7 +2,8 @@
 //! Results come back to the window as messages.
 
 use crate::feed::{Episode, Podcast};
-use crate::settings::Settings;
+use crate::library::{Feed, Library};
+use crate::settings::{Naming, Settings};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -133,6 +134,31 @@ pub struct Download {
     pub file_name: String,
 }
 
+/// The downloads for `episodes` of `feed`, whose fetched episodes are
+/// `podcast`'s, each with a file name no other episode in the library has
+/// in the folder it goes to. See `naming::file_names`.
+pub fn downloads(
+    library: &Library,
+    feed: &Feed,
+    podcast: &Podcast,
+    episodes: Vec<Episode>,
+    naming: Naming,
+    target: &Target,
+) -> Vec<Download> {
+    let podcast_title = feed.name().to_owned();
+    let reserved = library.reserved_names(&feed.url, &target.dir_for(&podcast_title));
+    let mut names = crate::naming::file_names(&podcast.episodes, naming, &reserved);
+    episodes
+        .into_iter()
+        .map(|episode| Download {
+            feed_url: feed.url.clone(),
+            podcast_title: podcast_title.clone(),
+            file_name: names.remove(&episode.id).unwrap_or_else(|| crate::naming::file_name(&episode, naming)),
+            episode,
+        })
+        .collect()
+}
+
 /// Where downloads go, fixed when the batch starts.
 #[derive(Clone)]
 pub struct Target {
@@ -212,4 +238,91 @@ pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc
     }
     rep.send(Msg::Progress(1.0));
     rep.send(Msg::DownloadsDone { cancelled: false });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::test_server::{ok, response, serve};
+    use std::sync::mpsc::channel;
+
+    fn episode(id: &str, title: &str, date: &str, url: &str) -> Episode {
+        Episode {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            published: chrono::DateTime::parse_from_rfc3339(date).ok(),
+            url: url.to_owned(),
+            mime: String::new(),
+            duration: String::new(),
+        }
+    }
+
+    fn podcast(title: &str, episodes: Vec<Episode>) -> Podcast {
+        Podcast { title: title.to_owned(), website: String::new(), episodes }
+    }
+
+    #[test]
+    fn podcasts_sharing_a_folder_get_names_of_their_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = Target { dir: dir.path().to_owned(), folder_per_podcast: false };
+        let mut a = Feed::new("https://a.example/feed".into(), "News A".into(), String::new());
+        let b = Feed::new("https://b.example/feed".into(), "News B".into(), String::new());
+        // Both bulletins come out on the hour.
+        let hour = "2026-10-23T09:00:00+00:00";
+        a.mark_downloaded("a1", &dir.path().join(crate::naming::file_name(&episode("a1", "", hour, "https://a/1.mp3"), Naming::Timestamp)));
+        let library = Library { feeds: vec![a, b.clone()], ..Library::default() };
+        let b1 = episode("b1", "", hour, "https://b/1.mp3");
+        let items = downloads(&library, &b, &podcast("News B", vec![b1.clone()]), vec![b1], Naming::Timestamp, &target);
+        assert_eq!(items.len(), 1);
+        assert!(items[0].file_name.ends_with(" (2).mp3"), "{}", items[0].file_name);
+        assert_eq!(items[0].podcast_title, "News B");
+    }
+
+    #[test]
+    fn downloads_report_each_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = Target { dir: dir.path().to_owned(), folder_per_podcast: true };
+        let server = serve(vec![ok(b"new episode"), response("404 Not Found", &[], b"")]);
+        let feed = Feed::new("https://show.example/feed".into(), "Show".into(), String::new());
+        let date = "2026-10-23T09:00:00+00:00";
+        let there = episode("1", "There already", date, &format!("{server}/never-asked.mp3"));
+        let new = episode("2", "New", "2026-10-24T09:00:00+00:00", &format!("{server}/new.mp3"));
+        let gone = episode("3", "Gone", "2026-10-25T09:00:00+00:00", &format!("{server}/gone.mp3"));
+        let show = podcast("Show", vec![gone.clone(), new.clone(), there.clone()]);
+        let library = Library { feeds: vec![feed.clone()], ..Library::default() };
+        let items = downloads(&library, &feed, &show, vec![there, new, gone], Naming::TimestampTitle, &target);
+        let folder = dir.path().join("Show");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(&items[0].file_name), b"old").unwrap();
+
+        let (tx, rx) = channel();
+        download(Reporter::new(tx, egui::Context::default()), items, target, Arc::new(AtomicBool::new(false)));
+        let mut outcomes = Vec::new();
+        let mut finished = None;
+        for msg in rx.try_iter() {
+            match msg {
+                Msg::EpisodeDone { episode_id, outcome, .. } => outcomes.push((episode_id, outcome)),
+                Msg::DownloadsDone { cancelled } => finished = Some(cancelled),
+                _ => {}
+            }
+        }
+        assert_eq!(finished, Some(false));
+        assert_eq!(outcomes.len(), 3);
+        assert!(matches!(&outcomes[0], (id, Outcome::AlreadyThere(_)) if id == "1"));
+        match &outcomes[1] {
+            (id, Outcome::Saved(path)) if id == "2" => assert_eq!(std::fs::read(path).unwrap(), b"new episode"),
+            _ => panic!("the new episode wasn't saved"),
+        }
+        assert!(matches!(&outcomes[2], (id, Outcome::Failed(_)) if id == "3"));
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2, "nothing saved for the failed one");
+    }
+
+    #[test]
+    fn a_crashing_job_says_so() {
+        let (tx, rx) = channel();
+        let rep = Reporter::new(tx, egui::Context::default());
+        rep.spawn(Job::Fetch, |_| panic!("on purpose"));
+        let msg = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert!(matches!(msg, Msg::Crashed(Job::Fetch)));
+    }
 }

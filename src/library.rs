@@ -54,6 +54,26 @@ impl Feed {
         if self.title.trim().is_empty() { &self.url } else { &self.title }
     }
 
+    /// Takes in what fetching the feed at `at` found: its title and web
+    /// page, if it has none yet.
+    pub fn fetched(&mut self, podcast: &crate::feed::Podcast, at: DateTime<Utc>) {
+        if self.title.trim().is_empty() && !podcast.title.is_empty() {
+            self.title = podcast.title.clone();
+        }
+        if self.website.is_empty() {
+            self.website = podcast.website.clone();
+        }
+        self.last_fetched = Some(at);
+    }
+
+    /// Records that episode `id` is downloaded, saved at `path`, so it can be
+    /// left out next time and its file name stays its own (see
+    /// `naming::file_names`).
+    pub fn mark_downloaded(&mut self, id: &str, path: &Path) {
+        self.downloaded.insert(id.to_owned());
+        self.files.insert(id.to_owned(), path.to_string_lossy().into_owned());
+    }
+
     /// "Last fetched 23 Oct 2026 14:05", in local time, or "Never fetched".
     pub fn fetched_text(&self) -> String {
         match self.last_fetched {
@@ -163,10 +183,11 @@ impl Library {
         reserved
     }
 
-    /// Adds feeds not already in the list, and returns how many were new.
-    /// A title or web page missing from a feed already there is filled in.
-    pub fn add_all(&mut self, feeds: Vec<Feed>) -> usize {
-        let mut added = 0;
+    /// Adds feeds not already in the list, and returns the addresses of
+    /// those that were new, each once. A title or web page missing from a
+    /// feed already there is filled in.
+    pub fn add_all(&mut self, feeds: Vec<Feed>) -> Vec<String> {
+        let mut added = Vec::new();
         for feed in feeds {
             match self.find(&feed.url) {
                 Some(i) => {
@@ -179,8 +200,8 @@ impl Library {
                     }
                 }
                 None => {
+                    added.push(feed.url.clone());
                     self.feeds.push(feed);
-                    added += 1;
                 }
             }
         }
@@ -218,12 +239,44 @@ mod tests {
         let mut lib = Library::default();
         let a = Feed::new("https://example.com/feed/".into(), String::new(), String::new());
         let b = Feed::new("http://EXAMPLE.com/feed".into(), "Example".into(), String::new());
-        assert_eq!(lib.add_all(vec![a]), 1);
-        assert_eq!(lib.add_all(vec![b]), 0);
+        assert_eq!(lib.add_all(vec![a]), ["https://example.com/feed/"]);
+        assert!(lib.add_all(vec![b]).is_empty());
         assert_eq!(lib.feeds[0].title, "Example");
         // Only the host name is case-insensitive.
         let c = Feed::new("https://example.com/FEED".into(), String::new(), String::new());
-        assert_eq!(lib.add_all(vec![c]), 1);
+        assert_eq!(lib.add_all(vec![c]).len(), 1);
+        // A file listing a feed twice adds it once.
+        let d = Feed::new("https://d.example/rss".into(), String::new(), String::new());
+        assert_eq!(lib.add_all(vec![d.clone(), d]).len(), 1);
+    }
+
+    #[test]
+    fn fetching_fills_in_only_what_is_missing() {
+        let podcast = crate::feed::Podcast {
+            title: "From the feed".into(),
+            website: "https://show.example".into(),
+            episodes: Vec::new(),
+        };
+        let at = Utc::now();
+        let mut untitled = Feed::new("https://a.example/feed".into(), " ".into(), String::new());
+        untitled.fetched(&podcast, at);
+        assert_eq!(untitled.title, "From the feed");
+        assert_eq!(untitled.website, "https://show.example");
+        assert_eq!(untitled.last_fetched, Some(at));
+        let mut named = Feed::new("https://a.example/feed".into(), "From the OPML".into(), "https://mine".into());
+        named.fetched(&podcast, at);
+        assert_eq!(named.title, "From the OPML");
+        assert_eq!(named.website, "https://mine");
+    }
+
+    #[test]
+    fn marking_downloaded_records_the_file() {
+        let mut feed = Feed::new("https://a.example/feed".into(), String::new(), String::new());
+        let path = Path::new("/music/Show/Pilot.mp3");
+        feed.mark_downloaded("guid-1", path);
+        assert!(feed.downloaded.contains("guid-1"));
+        let r = Library { feeds: vec![feed], ..Library::default() }.reserved_names("https://a.example/feed", Path::new("/music/Show"));
+        assert_eq!(r.own["guid-1"], "Pilot.mp3");
     }
 
     #[test]

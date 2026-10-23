@@ -37,11 +37,7 @@ pub fn fetch_text(url: &str) -> anyhow::Result<String> {
         .limit(MAX_FEED_BYTES)
         .read_to_vec()
         .with_context(|| format!("could not read {url}"))?;
-    // Feeds are nearly always UTF-8; anything else loses only odd characters.
-    let mut text = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-    let bom = text.len() - text.trim_start_matches('\u{feff}').len();
-    text.drain(..bom);
-    Ok(text)
+    Ok(crate::text::decode(bytes))
 }
 
 /// Downloads `url` to `dest`, calling `progress` with the bytes received
@@ -95,8 +91,125 @@ pub fn download(
     result
 }
 
+/// A web server for tests, so downloading can be tested without the
+/// internet.
+#[cfg(test)]
+pub mod test_server {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serves `responses` in turn, one to each connection, and returns the
+    /// server's address, such as `http://127.0.0.1:50000`. It stops after
+    /// the last.
+    pub fn serve(responses: Vec<Vec<u8>>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for response in responses {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                // The request's headers; there is never a body.
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
+                // The client may have hung up, as a cancelled download does.
+                let _ = stream.write_all(&response);
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// A response with `status`, such as "200 OK", the headers given, and
+    /// `body`, whose length it gives unless the headers do.
+    pub fn response(status: &str, headers: &[&str], body: &[u8]) -> Vec<u8> {
+        let mut out = format!("HTTP/1.1 {status}\r\nConnection: close\r\n");
+        if !headers.iter().any(|h| h.to_ascii_lowercase().starts_with("content-length:")) {
+            out.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        }
+        for header in headers {
+            out.push_str(&format!("{header}\r\n"));
+        }
+        out.push_str("\r\n");
+        let mut out = out.into_bytes();
+        out.extend_from_slice(body);
+        out
+    }
+
+    pub fn ok(body: &[u8]) -> Vec<u8> {
+        response("200 OK", &[], body)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_server::{ok, response, serve};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// The names of the files in `dir`.
+    fn files(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn downloads_through_redirects() {
+        let body = vec![7u8; 600 * 1024];
+        let server = serve(vec![response("302 Found", &["Location: /episode.mp3"], b""), ok(&body)]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("episode.mp3");
+        let mut last = (0, None);
+        let cancel = AtomicBool::new(false);
+        super::download(&format!("{server}/track?to=episode"), &dest, &cancel, |got, total| last = (got, total)).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        assert_eq!(last, (body.len() as u64, Some(body.len() as u64)));
+        assert_eq!(files(dir.path()), ["episode.mp3"], "no .part file is left");
+    }
+
+    #[test]
+    fn a_download_that_ends_early_leaves_nothing() {
+        // Says 1000 bytes, sends 500 and hangs up.
+        let server = serve(vec![response("200 OK", &["Content-Length: 1000"], &[1u8; 500])]);
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let result = super::download(&format!("{server}/a.mp3"), &dir.path().join("a.mp3"), &cancel, |_, _| {});
+        assert!(result.is_err());
+        assert!(files(dir.path()).is_empty(), "{:?}", files(dir.path()));
+    }
+
+    #[test]
+    fn a_missing_file_is_an_error() {
+        let server = serve(vec![response("404 Not Found", &[], b"Not here")]);
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let result = super::download(&format!("{server}/gone.mp3"), &dir.path().join("gone.mp3"), &cancel, |_, _| {});
+        assert!(result.is_err());
+        assert!(files(dir.path()).is_empty(), "the error page isn't saved as the episode");
+    }
+
+    #[test]
+    fn cancelling_part_way_leaves_nothing() {
+        let server = serve(vec![ok(&vec![0u8; 8 * 1024 * 1024])]);
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let result = super::download(&format!("{server}/big.mp3"), &dir.path().join("big.mp3"), &cancel, |_, _| {
+            cancel.store(true, Ordering::Relaxed)
+        });
+        assert_eq!(result.unwrap_err().to_string(), "cancelled");
+        assert!(files(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn feeds_are_read_as_text() {
+        let server = serve(vec![ok("\u{feff}<rss>caf\u{e9}</rss>".as_bytes())]);
+        assert_eq!(super::fetch_text(&format!("{server}/feed")).unwrap(), "<rss>caf\u{e9}</rss>");
+    }
+
     /// Fetches and reads some real feeds. Needs the internet, so it only runs
     /// with `cargo test -- --ignored`.
     #[test]

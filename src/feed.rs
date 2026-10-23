@@ -1,8 +1,9 @@
 //! Reading a podcast's episodes out of its RSS or Atom feed.
 
+use crate::text::{attr, collapse_whitespace};
 use anyhow::{Context, bail};
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -168,12 +169,12 @@ pub fn parse(xml: &str) -> anyhow::Result<Podcast> {
                 }
                 let value = text.trim().to_owned();
                 match (item.as_mut(), field.take()) {
-                    (Some(ep), Some(Field::Title)) if ep.title.is_empty() => ep.title = collapse(&value),
+                    (Some(ep), Some(Field::Title)) if ep.title.is_empty() => ep.title = collapse_whitespace(&value),
                     (Some(ep), Some(Field::Guid)) if ep.id.is_empty() => ep.id = value,
                     (Some(_), Some(Field::Date)) if item_date.is_empty() => item_date = value,
                     (Some(_), Some(Field::Updated)) if item_updated.is_empty() => item_updated = value,
                     (Some(ep), Some(Field::Duration)) => ep.duration = value,
-                    (None, Some(Field::Title)) if podcast.title.is_empty() => podcast.title = collapse(&value),
+                    (None, Some(Field::Title)) if podcast.title.is_empty() => podcast.title = collapse_whitespace(&value),
                     (None, Some(Field::Link)) if podcast.website.is_empty() => podcast.website = value,
                     _ => {}
                 }
@@ -215,15 +216,6 @@ pub fn parse(xml: &str) -> anyhow::Result<Podcast> {
     // Newest first; episodes without a date go last, in feed order.
     podcast.episodes.sort_by_key(|e| std::cmp::Reverse(e.published));
     Ok(podcast)
-}
-
-fn attr(e: &BytesStart, name: &str) -> Option<String> {
-    let a = e.try_get_attribute(name).ok()??;
-    Some(a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok()?.into_owned())
-}
-
-fn collapse(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Reads a publish date as feeds write it: RFC 2822 in RSS

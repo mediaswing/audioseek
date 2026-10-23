@@ -268,6 +268,20 @@ pub enum Place {
     Settings,
 }
 
+impl Place {
+    pub const ALL: [Place; 4] = [Place::Anywhere, Place::Feeds, Place::Episodes, Place::Settings];
+
+    /// The heading the place's shortcuts are listed under.
+    pub fn heading(self) -> &'static str {
+        match self {
+            Place::Anywhere => "Anywhere",
+            Place::Feeds => "Feeds tab",
+            Place::Episodes => "Episodes tab",
+            Place::Settings => "Settings tab",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     // Anywhere
@@ -662,13 +676,8 @@ impl Keymap {
         if !self.enabled {
             out.push_str("Keyboard shortcuts are turned off. Turn them on again on the Shortcuts tab.\n\n");
         }
-        for (place, heading) in [
-            (Place::Anywhere, "Anywhere"),
-            (Place::Feeds, "Feeds tab"),
-            (Place::Episodes, "Episodes tab"),
-            (Place::Settings, "Settings tab"),
-        ] {
-            out.push_str(heading);
+        for place in Place::ALL {
+            out.push_str(place.heading());
             out.push('\n');
             for action in Action::ALL.into_iter().filter(|a| a.place() == place) {
                 let keys = match self.active(action) {

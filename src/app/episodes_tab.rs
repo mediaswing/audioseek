@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::feed::Episode;
-use crate::worker::{Download, Target as DownloadTarget};
+use crate::worker::Target as DownloadTarget;
 
 impl PodApp {
     fn current_podcast(&self) -> Option<(&crate::library::Feed, Option<&Podcast>)> {
@@ -116,23 +116,9 @@ impl PodApp {
 
     fn start_downloads(&mut self, episodes: Vec<Episode>) {
         let Some(feed) = self.library.feeds.get(self.selected) else { return };
-        let feed_url = feed.url.clone();
-        let podcast_title = feed.name().to_owned();
-        let Some(podcast) = self.podcasts.get(&feed_url) else { return };
+        let Some(podcast) = self.podcasts.get(&feed.url) else { return };
         let target = DownloadTarget::from(&self.settings);
-        let reserved = self.library.reserved_names(&feed_url, &target.dir_for(&podcast_title));
-        let mut names = crate::naming::file_names(&podcast.episodes, self.settings.naming, &reserved);
-        let items: Vec<Download> = episodes
-            .into_iter()
-            .map(|episode| Download {
-                feed_url: feed_url.clone(),
-                podcast_title: podcast_title.clone(),
-                file_name: names
-                    .remove(&episode.id)
-                    .unwrap_or_else(|| crate::naming::file_name(&episode, self.settings.naming)),
-                episode,
-            })
-            .collect();
+        let items = worker::downloads(&self.library, feed, podcast, episodes, self.settings.naming, &target);
         let count = items.len();
         let cancel = self.start_job(JobKind::Downloading, count);
         self.announce(format!("Downloading {}…", plural(count, "episode")));

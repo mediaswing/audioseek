@@ -16,7 +16,7 @@ impl PodApp {
         };
         let feeds = std::fs::read(&path)
             .map_err(anyhow::Error::from)
-            .and_then(|bytes| crate::opml::parse(String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}')));
+            .and_then(|bytes| crate::opml::parse(&crate::text::decode(bytes)));
         let feeds = match feeds {
             Ok(feeds) => feeds,
             Err(e) => {
@@ -29,13 +29,10 @@ impl PodApp {
             return;
         }
         let found = feeds.len();
-        let before = self.library.feeds.len();
-        let added = self.library.add_all(feeds);
-        // The feeds just added, each once, even if the file lists one twice.
-        let new_urls: Vec<String> = self.library.feeds[before..].iter().map(|f| f.url.clone()).collect();
+        let new_urls = self.library.add_all(feeds);
         self.save_library();
-        let mut text = format!("Imported {} from {found} in the file.", plural(added, "new feed"));
-        if added > 0 && !self.is_busy() {
+        let mut text = format!("Imported {} from {found} in the file.", plural(new_urls.len(), "new feed"));
+        if !new_urls.is_empty() && !self.is_busy() {
             text.push_str(" Fetching them now.");
         }
         self.announce(text);
