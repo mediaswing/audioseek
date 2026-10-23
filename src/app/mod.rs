@@ -380,24 +380,29 @@ impl PodApp {
             .map(|e| e.title.clone())
             .unwrap_or_else(|| episode_id.clone());
         let Some(job) = &mut self.job else { return };
-        let mark = match outcome {
+        let saved_to = match outcome {
             Outcome::Saved(path) => {
                 log::info!("saved {}", path.display());
                 job.saved += 1;
-                true
+                Some(path)
             }
             Outcome::AlreadyThere(path) => {
                 log::info!("already there: {}", path.display());
                 job.already += 1;
-                true
+                Some(path)
             }
             Outcome::Failed(e) => {
                 job.failed.push(format!("{title}: {e}"));
-                false
+                None
             }
         };
-        if mark && let Some(i) = self.library.find(&feed_url) {
-            self.library.feeds[i].downloaded.insert(episode_id.clone());
+        if let Some(path) = saved_to
+            && let Some(i) = self.library.find(&feed_url)
+        {
+            let feed = &mut self.library.feeds[i];
+            feed.downloaded.insert(episode_id.clone());
+            // So the name stays this episode's. See `naming::file_names`.
+            feed.files.insert(episode_id.clone(), path.to_string_lossy().into_owned());
             if let Some(ticked) = self.ticked.get_mut(&feed_url) {
                 ticked.remove(&episode_id);
             }

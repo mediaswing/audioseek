@@ -24,6 +24,13 @@ named after the podcast. Episodes already in the folder are skipped.
 Downloads are written to a `.part` file first, so a cancelled download never
 looks finished.
 
+`feeds.json` records the file each episode was saved as. No other episode
+is given that name, even one from another podcast sharing the folder (two
+bulletins published on the hour, say), which gets " (2)" instead. An episode
+keeps its name as the feed changes or if the file name setting is changed,
+so it is still found in the folder. Files downloaded by versions before this
+record are assumed to be the episode whose name they have.
+
 ## Saved feeds
 
 Every feed is kept in `feeds.json`, with when it was last fetched and which

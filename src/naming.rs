@@ -34,25 +34,61 @@ pub fn file_name_in<Tz: TimeZone>(episode: &Episode, naming: Naming, tz: &Tz) ->
     format!("{stem}.{}", extension(&episode.url, &episode.mime))
 }
 
-/// File names for all of a podcast's `episodes`, by episode id. Episodes
-/// whose names would clash, even only in letter case, get " (2)" and so on,
-/// given out oldest first so an episode's name doesn't change as newer ones
-/// arrive. Each episode then has a file of its own whichever batch it is
-/// downloaded in, so a file already in the folder is that episode's.
-pub fn file_names(episodes: &[Episode], naming: Naming) -> HashMap<String, String> {
-    file_names_in(episodes, naming, &chrono::Local)
+/// The names of files already downloaded into the folder a podcast's
+/// episodes go to, as `feeds.json` records them. See
+/// `Library::reserved_names`.
+#[derive(Clone, Debug, Default)]
+pub struct Reserved {
+    /// The names this podcast's episodes were saved under, by episode id.
+    pub own: HashMap<String, String>,
+    /// Every name saved under in the folder, in lower case, with the id of
+    /// the episode it belongs to if that is one of this podcast's, or
+    /// `None` if it belongs to another podcast's.
+    pub taken: HashMap<String, Option<String>>,
+}
+
+/// File names for all of a podcast's `episodes`, by episode id.
+///
+/// An episode already downloaded into the folder keeps the name it was
+/// saved under. Others are named by `naming`, and never given a name that
+/// is already some other episode's, whether this podcast's or (sharing the
+/// folder) another's: names that would clash, even only in letter case, get
+/// " (2)" and so on, given out oldest first. Each episode then has a file of
+/// its own, so a file already in the folder under its name is its own.
+pub fn file_names(episodes: &[Episode], naming: Naming, reserved: &Reserved) -> HashMap<String, String> {
+    file_names_in(episodes, naming, reserved, &chrono::Local)
 }
 
 /// As `file_names`, with publish times in time zone `tz`.
-pub fn file_names_in<Tz: TimeZone>(episodes: &[Episode], naming: Naming, tz: &Tz) -> HashMap<String, String> {
-    let mut taken = HashSet::new();
+pub fn file_names_in<Tz: TimeZone>(
+    episodes: &[Episode],
+    naming: Naming,
+    reserved: &Reserved,
+    tz: &Tz,
+) -> HashMap<String, String> {
+    let mut used = HashSet::new();
     let mut names = HashMap::new();
+    for episode in episodes {
+        if let Some(name) = reserved.own.get(&episode.id)
+            && used.insert(name.to_lowercase())
+        {
+            names.insert(episode.id.clone(), name.clone());
+        }
+    }
     // The feed lists the newest first.
     for episode in episodes.iter().rev() {
+        if names.contains_key(&episode.id) {
+            continue;
+        }
         let mut name = file_name_in(episode, naming, tz);
         let (stem, ext) = name.rsplit_once('.').map(|(s, e)| (s.to_owned(), e.to_owned())).unwrap_or_default();
         let mut n = 2;
-        while !taken.insert(name.to_lowercase()) {
+        loop {
+            let lower = name.to_lowercase();
+            let someone_elses = reserved.taken.get(&lower).is_some_and(|owner| owner.as_ref() != Some(&episode.id));
+            if !someone_elses && used.insert(lower) {
+                break;
+            }
             name = format!("{stem} ({n}).{ext}");
             n += 1;
         }
@@ -191,14 +227,56 @@ mod tests {
     fn clashing_names_are_numbered_oldest_first() {
         let older = episode(Some("2026-01-01T00:00:00+00:00"), "Trailer", "https://x/1.mp3");
         let newer = episode(Some("2026-02-01T00:00:00+00:00"), "trailer", "https://x/2.mp3");
-        let names = file_names_in(&[newer.clone(), older.clone()], Naming::Title, &chrono::Utc);
+        let none = Reserved::default();
+        let names = file_names_in(&[newer.clone(), older.clone()], Naming::Title, &none, &chrono::Utc);
         assert_eq!(names["https://x/1.mp3"], "Trailer.mp3");
         assert_eq!(names["https://x/2.mp3"], "trailer (2).mp3");
         // A newer episode with the same name changes neither of these.
         let newest = episode(Some("2026-03-01T00:00:00+00:00"), "Trailer", "https://x/3.mp3");
-        let again = file_names_in(&[newest, newer, older], Naming::Title, &chrono::Utc);
+        let again = file_names_in(&[newest, newer, older], Naming::Title, &none, &chrono::Utc);
         assert_eq!(again["https://x/1.mp3"], "Trailer.mp3");
         assert_eq!(again["https://x/2.mp3"], "trailer (2).mp3");
         assert_eq!(again["https://x/3.mp3"], "Trailer (3).mp3");
+    }
+
+    fn reserved(own: &[(&str, &str)], others: &[&str]) -> Reserved {
+        let mut r = Reserved::default();
+        for (id, name) in own {
+            r.own.insert(id.to_string(), name.to_string());
+            r.taken.insert(name.to_lowercase(), Some(id.to_string()));
+        }
+        for name in others {
+            r.taken.insert(name.to_lowercase(), None);
+        }
+        r
+    }
+
+    #[test]
+    fn another_podcasts_files_in_the_folder_are_not_reused() {
+        // Two news bulletins published on the hour, in one folder.
+        let ep = episode(Some("2026-10-23T00:00:00+00:00"), "News", "https://b/1.mp3");
+        let r = reserved(&[], &["2026-10-23-00-00-00.mp3"]);
+        let names = file_names_in(&[ep], Naming::Timestamp, &r, &chrono::Utc);
+        assert_eq!(names["https://b/1.mp3"], "2026-10-23-00-00-00 (2).mp3");
+    }
+
+    #[test]
+    fn downloaded_episodes_keep_their_names_when_the_feed_changes() {
+        // "Trailer.mp3" and "trailer (2).mp3" were downloaded. The older
+        // episode has since left the feed, and a third "Trailer" arrived.
+        let newer = episode(Some("2026-02-01T00:00:00+00:00"), "trailer", "https://x/2.mp3");
+        let newest = episode(Some("2026-03-01T00:00:00+00:00"), "Trailer", "https://x/3.mp3");
+        let r = reserved(&[("https://x/1.mp3", "Trailer.mp3"), ("https://x/2.mp3", "trailer (2).mp3")], &[]);
+        let names = file_names_in(&[newest, newer], Naming::Title, &r, &chrono::Utc);
+        assert_eq!(names["https://x/2.mp3"], "trailer (2).mp3");
+        assert_eq!(names["https://x/3.mp3"], "Trailer (3).mp3", "not a file that is another episode's");
+    }
+
+    #[test]
+    fn a_recorded_name_is_kept_whatever_the_naming() {
+        let ep = episode(Some("2026-10-23T00:00:00+00:00"), "Pilot", "https://x/1.mp3");
+        let r = reserved(&[("https://x/1.mp3", "2026-10-23-00-00-00.mp3")], &[]);
+        let names = file_names_in(&[ep], Naming::Title, &r, &chrono::Utc);
+        assert_eq!(names["https://x/1.mp3"], "2026-10-23-00-00-00.mp3", "so it is found already there");
     }
 }

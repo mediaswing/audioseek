@@ -4,7 +4,8 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Feed {
@@ -22,6 +23,11 @@ pub struct Feed {
     /// downloaded, so they can be left out next time.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub downloaded: BTreeSet<String>,
+    /// Where each episode downloaded was saved, by id, so no other episode
+    /// is given its file name, and it keeps the name as the feed changes.
+    /// Episodes downloaded before this was kept have none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
     /// Set by hand in `feeds.json` to leave the feed out of fetching every
     /// feed and of fetching on its own when shown. It can still be fetched
     /// by choosing it and fetching just that one.
@@ -31,7 +37,16 @@ pub struct Feed {
 
 impl Feed {
     pub fn new(url: String, title: String, website: String) -> Self {
-        Feed { url, title, website, added: Utc::now(), last_fetched: None, downloaded: BTreeSet::new(), disabled: false }
+        Feed {
+            url,
+            title,
+            website,
+            added: Utc::now(),
+            last_fetched: None,
+            downloaded: BTreeSet::new(),
+            files: BTreeMap::new(),
+            disabled: false,
+        }
     }
 
     /// The name shown in lists: its title, or its address if it has none yet.
@@ -126,6 +141,28 @@ impl Library {
         self.feeds.iter().position(|f| same_url(&f.url, url))
     }
 
+    /// The names of the files recorded as downloaded into `dir`, for naming
+    /// the episodes of the feed at `feed_url` that go there.
+    pub fn reserved_names(&self, feed_url: &str, dir: &Path) -> crate::naming::Reserved {
+        let mut reserved = crate::naming::Reserved::default();
+        for feed in &self.feeds {
+            let own = same_url(&feed.url, feed_url);
+            for (id, path) in &feed.files {
+                let path = Path::new(path);
+                let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else { continue };
+                if !same_dir(parent, dir) {
+                    continue;
+                }
+                let name = name.to_string_lossy().into_owned();
+                reserved.taken.insert(name.to_lowercase(), own.then(|| id.clone()));
+                if own {
+                    reserved.own.insert(id.clone(), name);
+                }
+            }
+        }
+        reserved
+    }
+
     /// Adds feeds not already in the list, and returns how many were new.
     /// A title or web page missing from a feed already there is filled in.
     pub fn add_all(&mut self, feeds: Vec<Feed>) -> usize {
@@ -163,6 +200,13 @@ fn same_url(a: &str, b: &str) -> bool {
         format!("{}{path}", host.to_lowercase())
     }
     key(a) == key(b)
+}
+
+/// Whether two folders are the same, ignoring letter case (as Windows and
+/// macOS do) and a trailing separator.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let parts = |p: &Path| p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect::<Vec<_>>();
+    parts(a) == parts(b)
 }
 
 #[cfg(test)]
@@ -226,6 +270,41 @@ mod tests {
         assert_eq!(back.feeds[0].last_fetched, lib.feeds[0].last_fetched);
         assert!(!back.feeds[0].disabled);
         assert!(!json.contains("disabled"), "only disabled feeds say so");
+    }
+
+    #[test]
+    fn reserved_names_are_the_folders_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("Podcasts");
+        let saved = |name: &str| shared.join(name).to_string_lossy().into_owned();
+        let mut lib = Library::default();
+        let mut a = Feed::new("https://a.example/feed".into(), "A".into(), String::new());
+        a.files.insert("a1".into(), saved("2026-10-23-00-00-00.mp3"));
+        a.files.insert("a2".into(), dir.path().join("Elsewhere/Other.mp3").to_string_lossy().into_owned());
+        let mut b = Feed::new("https://b.example/feed".into(), "B".into(), String::new());
+        b.files.insert("b1".into(), saved("Pilot.MP3"));
+        lib.feeds = vec![a, b];
+
+        // The folder typed differently, as Windows and macOS allow.
+        let typed = std::path::PathBuf::from(format!("{}/", shared.to_string_lossy().to_uppercase()));
+        let r = lib.reserved_names("https://b.example/feed", &typed);
+        assert_eq!(r.own.len(), 1);
+        assert_eq!(r.own["b1"], "Pilot.MP3");
+        assert_eq!(r.taken.len(), 2, "not the file in another folder");
+        assert_eq!(r.taken["pilot.mp3"], Some("b1".to_owned()));
+        assert_eq!(r.taken["2026-10-23-00-00-00.mp3"], None, "another podcast's");
+    }
+
+    #[test]
+    fn files_are_read_and_kept() {
+        let json = r#"{"feeds":[{"url":"https://example.com/feed","title":"","added":"2026-10-23T14:05:00Z",
+            "downloaded":["guid-1"],"files":{"guid-1":"/music/Show/Pilot.mp3"}}]}"#;
+        let lib: Library = serde_json::from_str(json).unwrap();
+        assert_eq!(lib.feeds[0].files["guid-1"], "/music/Show/Pilot.mp3");
+        assert!(serde_json::to_string(&lib).unwrap().contains(r#""files":{"guid-1":"/music/Show/Pilot.mp3"}"#));
+        // A feed with none says nothing about it, as before.
+        let empty = Feed::new("https://example.com/feed".into(), String::new(), String::new());
+        assert!(!serde_json::to_string(&empty).unwrap().contains("files"));
     }
 
     #[test]

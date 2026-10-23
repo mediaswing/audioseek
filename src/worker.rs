@@ -128,8 +128,8 @@ pub struct Download {
     pub feed_url: String,
     pub podcast_title: String,
     pub episode: Episode,
-    /// From `naming::file_names`, so it is unique among the podcast's
-    /// episodes.
+    /// From `naming::file_names`, so it is no other episode's, in this
+    /// podcast or another sharing the folder.
     pub file_name: String,
 }
 
@@ -147,17 +147,23 @@ impl From<&Settings> for Target {
 }
 
 impl Target {
-    fn path(&self, item: &Download) -> PathBuf {
+    /// The folder a podcast's episodes go in.
+    pub fn dir_for(&self, podcast_title: &str) -> PathBuf {
         let mut dir = self.dir.clone();
         if self.folder_per_podcast {
-            dir.push(crate::naming::folder_name(&item.podcast_title));
+            dir.push(crate::naming::folder_name(podcast_title));
         }
-        dir.join(&item.file_name)
+        dir
+    }
+
+    fn path(&self, item: &Download) -> PathBuf {
+        self.dir_for(&item.podcast_title).join(&item.file_name)
     }
 }
 
 /// Downloads each episode in turn. One that is already in the folder under
-/// the same name is left alone.
+/// its name is left alone: the name is no other episode's (see `Download`),
+/// so the file is taken to be this one's.
 pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc<AtomicBool>) {
     let count = items.len().max(1);
     for (i, item) in items.into_iter().enumerate() {

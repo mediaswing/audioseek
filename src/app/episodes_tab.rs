@@ -119,7 +119,9 @@ impl PodApp {
         let feed_url = feed.url.clone();
         let podcast_title = feed.name().to_owned();
         let Some(podcast) = self.podcasts.get(&feed_url) else { return };
-        let mut names = crate::naming::file_names(&podcast.episodes, self.settings.naming);
+        let target = DownloadTarget::from(&self.settings);
+        let reserved = self.library.reserved_names(&feed_url, &target.dir_for(&podcast_title));
+        let mut names = crate::naming::file_names(&podcast.episodes, self.settings.naming, &reserved);
         let items: Vec<Download> = episodes
             .into_iter()
             .map(|episode| Download {
@@ -132,7 +134,6 @@ impl PodApp {
             })
             .collect();
         let count = items.len();
-        let target = DownloadTarget::from(&self.settings);
         let cancel = self.start_job(JobKind::Downloading, count);
         self.announce(format!("Downloading {}…", plural(count, "episode")));
         self.rep.spawn(worker::Job::Download, move |rep| worker::download(rep, items, target, cancel));

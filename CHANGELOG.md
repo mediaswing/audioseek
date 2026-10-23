@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- An episode could be skipped as "already in the folder", and marked as downloaded, when the file there was a different episode's. This happened when two podcasts shared a folder and published at the same time, when two podcasts' names made the same folder, and, with title naming, when a feed dropped an old episode and the " (2)" numbering moved along. `feeds.json` now records the file each episode is saved as (in a new `files` field, which older versions ignore), and no other episode is given that name.
 - If fetching or downloading crashes, the app now says so and can be used again, instead of waiting for the job for ever.
 - A damaged `feeds.json` or `settings.json` is kept under a dated name, and the app says so when it starts, rather than starting empty without a word. A `settings.json` that can't be read (locked, say) is no longer saved over.
 - A failure to save the settings is now reported.
