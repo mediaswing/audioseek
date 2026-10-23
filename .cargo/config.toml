@@ -1,0 +1,6 @@
+# On Windows, link the C runtime into audioseek.exe, so it runs on PCs
+# without the Visual C++ Redistributable and the installer has just the exe
+# (and its licence) to install. (The Speech Output Engine can't do this, as its speaker
+# labelling DLLs use the DLL runtime, so it ships the runtime DLLs instead.)
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

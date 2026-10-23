@@ -1,0 +1,187 @@
+//! Work done away from the window: fetching feeds and downloading episodes.
+//! Results come back to the window as messages.
+
+use crate::feed::{Episode, Podcast};
+use crate::settings::{Naming, Settings};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+
+pub enum Msg {
+    /// A feed has been fetched and read, or couldn't be.
+    FeedFetched(String, Result<Podcast, String>),
+    /// Every feed asked for has been tried.
+    RefreshDone { fetched: usize, failed: usize, cancelled: bool },
+    /// An episode is starting to download: its number, counting from 1, and
+    /// its title.
+    Downloading(usize, String),
+    /// An episode has been saved, was already there, or failed.
+    EpisodeDone { feed_url: String, episode_id: String, outcome: Outcome },
+    DownloadsDone { cancelled: bool },
+    Progress(f32),
+    /// The update check has finished: the newer version, if there is one.
+    /// `asked` says whether the user asked, rather than it being the check
+    /// made at startup.
+    UpdateChecked { result: Result<Option<String>, String>, asked: bool },
+}
+
+pub enum Outcome {
+    Saved(PathBuf),
+    /// A file with its name is already in the folder.
+    AlreadyThere(PathBuf),
+    Failed(String),
+}
+
+#[derive(Clone)]
+pub struct Reporter {
+    tx: Sender<Msg>,
+    ctx: egui::Context,
+}
+
+impl Reporter {
+    pub fn new(tx: Sender<Msg>, ctx: egui::Context) -> Self {
+        Self { tx, ctx }
+    }
+
+    pub fn send(&self, msg: Msg) {
+        let _ = self.tx.send(msg);
+        self.ctx.request_repaint();
+    }
+
+    pub fn spawn(&self, job: impl FnOnce(Reporter) + Send + 'static) {
+        let rep = self.clone();
+        std::thread::spawn(move || job(rep));
+    }
+}
+
+/// Fetches each feed in turn.
+pub fn refresh(rep: Reporter, urls: Vec<String>, cancel: Arc<AtomicBool>) {
+    let (mut fetched, mut failed) = (0, 0);
+    let count = urls.len().max(1);
+    for (i, url) in urls.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            rep.send(Msg::RefreshDone { fetched, failed, cancelled: true });
+            return;
+        }
+        let result = crate::net::fetch_text(&url)
+            .and_then(|text| crate::feed::parse(&text))
+            .map_err(|e| {
+                log::warn!("{url}: {e:#}");
+                format!("{e:#}")
+            });
+        if result.is_ok() { fetched += 1 } else { failed += 1 }
+        rep.send(Msg::FeedFetched(url, result));
+        rep.send(Msg::Progress((i + 1) as f32 / count as f32));
+    }
+    rep.send(Msg::RefreshDone { fetched, failed, cancelled: false });
+}
+
+/// Asks GitHub whether there is a newer version.
+pub fn check_for_update(rep: Reporter, asked: bool) {
+    let result = crate::update::check().map_err(|e| {
+        log::warn!("update check failed: {e:#}");
+        format!("{e:#}")
+    });
+    if let Ok(Some(version)) = &result {
+        log::info!("version {version} is available");
+    }
+    rep.send(Msg::UpdateChecked { result, asked });
+}
+
+/// One episode to download, and where it goes.
+pub struct Download {
+    pub feed_url: String,
+    pub podcast_title: String,
+    pub episode: Episode,
+}
+
+/// Where downloads go and how they are named, fixed when the batch starts.
+#[derive(Clone)]
+pub struct Target {
+    pub dir: PathBuf,
+    pub naming: Naming,
+    pub folder_per_podcast: bool,
+}
+
+impl From<&Settings> for Target {
+    fn from(s: &Settings) -> Self {
+        Target { dir: s.download_dir.clone(), naming: s.naming, folder_per_podcast: s.folder_per_podcast }
+    }
+}
+
+impl Target {
+    /// The file for `item`. Two episodes in this batch that would have the
+    /// same name (published the same second, say) get " (2)" and so on, so
+    /// neither is lost.
+    fn path(&self, item: &Download, claimed: &mut HashSet<PathBuf>) -> PathBuf {
+        let mut dir = self.dir.clone();
+        if self.folder_per_podcast {
+            dir.push(crate::naming::folder_name(&item.podcast_title));
+        }
+        let name = crate::naming::file_name(&item.episode, self.naming);
+        let mut path = dir.join(&name);
+        let (stem, ext) = name.rsplit_once('.').unwrap_or((&name, ""));
+        let mut n = 2;
+        while claimed.contains(&path) {
+            path = dir.join(format!("{stem} ({n}).{ext}"));
+            n += 1;
+        }
+        claimed.insert(path.clone());
+        path
+    }
+}
+
+/// Downloads each episode in turn. One that is already in the folder under
+/// the same name is left alone.
+pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc<AtomicBool>) {
+    let count = items.len().max(1);
+    let mut claimed = HashSet::new();
+    for (i, item) in items.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            rep.send(Msg::DownloadsDone { cancelled: true });
+            return;
+        }
+        rep.send(Msg::Downloading(i + 1, item.episode.title.clone()));
+        rep.send(Msg::Progress(i as f32 / count as f32));
+        let path = target.path(&item, &mut claimed);
+        let outcome = if path.exists() {
+            Outcome::AlreadyThere(path)
+        } else {
+            let mut last_percent = -1i32;
+            let result = path
+                .parent()
+                .map(std::fs::create_dir_all)
+                .transpose()
+                .map_err(anyhow::Error::from)
+                .and_then(|_| {
+                    crate::net::download(&item.episode.url, &path, &cancel, |got, total| {
+                        let Some(total) = total.filter(|t| *t > 0) else { return };
+                        let part = (got as f64 / total as f64).min(1.0);
+                        let overall = (i as f64 + part) / count as f64;
+                        // Only as often as the bar visibly moves.
+                        let percent = (overall * 1000.0) as i32;
+                        if percent != last_percent {
+                            last_percent = percent;
+                            rep.send(Msg::Progress(overall as f32));
+                        }
+                    })
+                });
+            match result {
+                Ok(()) => Outcome::Saved(path),
+                Err(_) if cancel.load(Ordering::Relaxed) => {
+                    rep.send(Msg::DownloadsDone { cancelled: true });
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("{}: {e:#}", item.episode.url);
+                    Outcome::Failed(format!("{e:#}"))
+                }
+            }
+        };
+        rep.send(Msg::EpisodeDone { feed_url: item.feed_url, episode_id: item.episode.id, outcome });
+    }
+    rep.send(Msg::Progress(1.0));
+    rep.send(Msg::DownloadsDone { cancelled: false });
+}

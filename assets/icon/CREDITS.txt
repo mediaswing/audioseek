@@ -1,0 +1,6 @@
+audioseek.svg: "folder blue download" by the Papirus Development Team, from
+the Papirus icon theme (GPL-3.0), via icon-icons.com, where it is listed as
+free for commercial use.
+https://github.com/PapirusDevelopmentTeam/papirus-icon-theme
+
+audioseek.png, audioseek.ico and audioseek.icns are rendered from it unchanged.

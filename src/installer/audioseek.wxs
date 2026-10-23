@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows Installer package (.msi) for audioseek, built with WiX Toolset 6
+  by the windows job in .github/workflows/release.yml. It installs the
+  exe the workflow copies into its staging folder. Like the Speech Output
+  Engine's, but with no right-click menu and no DLLs: the exe is linked with
+  the C runtime built in (see .cargo/config.toml), so the only other file is
+  the GPL, LICENSE.txt, which must go with the program.
+
+  Variables, given with -d on the wix build command line:
+    Version      The version, from the tag (for example 0.1.0).
+    StageDir     The folder holding audioseek.exe and LICENSE.txt.
+
+  The app is installed for the current user only, in
+  %LOCALAPPDATA%\Programs\AudioSeek, so no administrator rights are needed.
+  Its settings and list of feeds live in %APPDATA%\AudioSeek, and downloaded
+  episodes wherever the user chose; the installer never touches them, so
+  they are kept through upgrades and uninstalling.
+
+  Files under the user's profile can't be the key path of a component (ICE38),
+  so the component has a registry value under
+  HKEY_CURRENT_USER\Software\AudioSeek\Installer as its key path instead.
+  WiX can't generate a GUID for a component like that, so it has a fixed GUID
+  written here. Never change it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!--
+    Never change the UpgradeCode: it is how a new version finds and replaces
+    the one already installed.
+  -->
+  <Package
+      Name="Podcast Batch Downloader"
+      Manufacturer="The audioseek contributors"
+      Version="$(var.Version)"
+      UpgradeCode="1336909E-CD95-445E-A3A2-709C78AC9D95"
+      Scope="perUser"
+      Language="1033">
+
+    <!--
+      The old version is removed before the new one is installed. Same-version
+      upgrades are allowed so that a rebuilt package replaces the installed one
+      rather than appearing a second time in the installed apps list.
+    -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed. To install this one, first uninstall the newer version from Installed apps in Windows Settings." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Shown in the installed apps list. There is nothing to change, so Modify isn't offered. -->
+    <Icon Id="audioseek.ico" SourceFile="$(sys.SOURCEFILEDIR)..\..\assets\icon\audioseek.ico" />
+    <Property Id="ARPPRODUCTICON" Value="audioseek.ico" />
+    <Property Id="ARPCOMMENTS" Value="Podcast Batch Downloader: an accessible way to download podcast episodes from an OPML file" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- Upgrade into the folder the previous version was installed in. -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallFolder" Root="HKCU" Key="Software\AudioSeek\Installer" Name="InstallFolder" Type="raw" />
+    </Property>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="AudioSeek" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="AppExe" Guid="E5BA47C3-9921-4D28-B6D4-D553108728BF">
+        <File Id="AudioSeekExe" Source="$(var.StageDir)\audioseek.exe" KeyPath="no" />
+        <File Id="LicenseTxt" Source="$(var.StageDir)\LICENSE.txt" KeyPath="no" />
+        <!-- A single Start menu shortcut, not in a folder. No desktop shortcut. -->
+        <Shortcut
+            Id="AudioSeekShortcut"
+            Directory="ProgramMenuFolder"
+            Name="Podcast Batch Downloader"
+            Description="Download podcast episodes from the feeds in an OPML file"
+            Target="[#AudioSeekExe]"
+            WorkingDirectory="INSTALLFOLDER" />
+        <!-- The installer's own key, removed with the app. The app's settings are not in it. -->
+        <RegistryKey Root="HKCU" Key="Software\AudioSeek\Installer" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        </RegistryKey>
+        <!-- Each folder goes only if it is empty, so other apps' folders in Programs are safe. -->
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="AudioSeek" Title="AudioSeek" AllowAbsent="no" AllowAdvertise="no">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+
+    <UIRef Id="AudioSeekUI" />
+  </Package>
+
+  <!--
+    The standard WixUI dialogs, in the order of WixUI_Minimal but with the
+    welcome page instead of the licence agreement: Welcome, Ready to install,
+    progress, Finished. Running the MSI again offers Repair or Remove (Change
+    is greyed out, as there is nothing to change). They are ordinary Windows
+    Installer dialogs, so they work from the keyboard (Tab, Space, Enter,
+    Escape) and with screen readers. The GPL doesn't need to be accepted to
+    install or run the app, so it isn't shown as an agreement.
+  -->
+  <Fragment>
+    <UI Id="AudioSeekUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="CancelDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="WelcomeDlg" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>
