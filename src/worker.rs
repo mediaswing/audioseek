@@ -13,18 +13,31 @@ pub enum Msg {
     /// A feed has been fetched and read, or couldn't be.
     FeedFetched(String, Result<Podcast, String>),
     /// Every feed asked for has been tried.
-    RefreshDone { fetched: usize, failed: usize, cancelled: bool },
+    RefreshDone {
+        fetched: usize,
+        failed: usize,
+        cancelled: bool,
+    },
     /// An episode is starting to download: its number, counting from 1, and
     /// its title.
     Downloading(usize, String),
     /// An episode has been saved, was already there, or failed.
-    EpisodeDone { feed_url: String, episode_id: String, outcome: Outcome },
-    DownloadsDone { cancelled: bool },
+    EpisodeDone {
+        feed_url: String,
+        episode_id: String,
+        outcome: Outcome,
+    },
+    DownloadsDone {
+        cancelled: bool,
+    },
     Progress(f32),
     /// The update check has finished: the newer version, if there is one.
     /// `asked` says whether the user asked, rather than it being the check
     /// made at startup.
-    UpdateChecked { result: Result<Option<String>, String>, asked: bool },
+    UpdateChecked {
+        result: Result<Option<String>, String>,
+        asked: bool,
+    },
     /// A job stopped part way through with a crash (logged with the
     /// details), so it will send nothing more.
     Crashed(Job),
@@ -99,13 +112,15 @@ pub fn refresh(rep: Reporter, urls: Vec<String>, cancel: Arc<AtomicBool>) {
             rep.send(Msg::RefreshDone { fetched, failed, cancelled: true });
             return;
         }
-        let result = crate::net::fetch_text(&url)
-            .and_then(|text| crate::feed::parse(&text))
-            .map_err(|e| {
-                log::warn!("{url}: {e:#}");
-                format!("{e:#}")
-            });
-        if result.is_ok() { fetched += 1 } else { failed += 1 }
+        let result = crate::net::fetch_text(&url).and_then(|text| crate::feed::parse(&text)).map_err(|e| {
+            log::warn!("{url}: {e:#}");
+            format!("{e:#}")
+        });
+        if result.is_ok() {
+            fetched += 1
+        } else {
+            failed += 1
+        }
         rep.send(Msg::FeedFetched(url, result));
         rep.send(Msg::Progress((i + 1) as f32 / count as f32));
     }
@@ -204,12 +219,8 @@ pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc
             Outcome::AlreadyThere(path)
         } else {
             let mut last_percent = -1i32;
-            let result = path
-                .parent()
-                .map(std::fs::create_dir_all)
-                .transpose()
-                .map_err(anyhow::Error::from)
-                .and_then(|_| {
+            let result =
+                path.parent().map(std::fs::create_dir_all).transpose().map_err(anyhow::Error::from).and_then(|_| {
                     crate::net::download(&item.episode.url, &path, &cancel, |got, total| {
                         let Some(total) = total.filter(|t| *t > 0) else { return };
                         let part = (got as f64 / total as f64).min(1.0);
@@ -269,7 +280,10 @@ mod tests {
         let b = Feed::new("https://b.example/feed".into(), "News B".into(), String::new());
         // Both bulletins come out on the hour.
         let hour = "2026-10-23T09:00:00+00:00";
-        a.mark_downloaded("a1", &dir.path().join(crate::naming::file_name(&episode("a1", "", hour, "https://a/1.mp3"), Naming::Timestamp)));
+        a.mark_downloaded(
+            "a1",
+            &dir.path().join(crate::naming::file_name(&episode("a1", "", hour, "https://a/1.mp3"), Naming::Timestamp)),
+        );
         let library = Library { feeds: vec![a, b.clone()], ..Library::default() };
         let b1 = episode("b1", "", hour, "https://b/1.mp3");
         let items = downloads(&library, &b, &podcast("News B", vec![b1.clone()]), vec![b1], Naming::Timestamp, &target);

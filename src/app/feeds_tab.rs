@@ -56,7 +56,9 @@ impl PodApp {
             return;
         };
         match crate::paths::write_atomic(&path, crate::opml::export(&self.library.feeds).as_bytes()) {
-            Ok(()) => self.announce(format!("Exported {} to {}.", plural(self.library.feeds.len(), "feed"), path.display())),
+            Ok(()) => {
+                self.announce(format!("Exported {} to {}.", plural(self.library.feeds.len(), "feed"), path.display()))
+            }
             Err(e) => self.show_error(format!("Could not save {}: {e}", path.display())),
         }
     }
@@ -183,13 +185,19 @@ impl PodApp {
 
         let selected_name = self.library.feeds.get(self.selected).map(|f| f.name().to_owned());
         let enabled = selected_name.is_some() && !busy;
-        if full_button(ui, &format!("Fetch the selected feed{}", self.keymap.hint(Action::RefreshFeed)), enabled).clicked() {
+        if full_button(ui, &format!("Fetch the selected feed{}", self.keymap.hint(Action::RefreshFeed)), enabled)
+            .clicked()
+        {
             self.fetch_selected();
         }
-        if full_button(ui, &format!("Fetch every feed{}", self.keymap.hint(Action::RefreshAll)), has_feeds && !busy).clicked() {
+        if full_button(ui, &format!("Fetch every feed{}", self.keymap.hint(Action::RefreshAll)), has_feeds && !busy)
+            .clicked()
+        {
             self.fetch_all();
         }
-        if full_button(ui, &format!("Remove the selected feed{}", self.keymap.hint(Action::RemoveFeed)), enabled).clicked() {
+        if full_button(ui, &format!("Remove the selected feed{}", self.keymap.hint(Action::RemoveFeed)), enabled)
+            .clicked()
+        {
             self.remove_feed();
         }
 

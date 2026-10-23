@@ -275,7 +275,8 @@ mod tests {
         let path = Path::new("/music/Show/Pilot.mp3");
         feed.mark_downloaded("guid-1", path);
         assert!(feed.downloaded.contains("guid-1"));
-        let r = Library { feeds: vec![feed], ..Library::default() }.reserved_names("https://a.example/feed", Path::new("/music/Show"));
+        let r = Library { feeds: vec![feed], ..Library::default() }
+            .reserved_names("https://a.example/feed", Path::new("/music/Show"));
         assert_eq!(r.own["guid-1"], "Pilot.mp3");
     }
 

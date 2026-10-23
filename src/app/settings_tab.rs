@@ -97,10 +97,12 @@ impl PodApp {
                 self.announce(format!("Episodes will be saved in {typed}."));
             }
         }
-        if full_button(ui, &format!("Choose the download folder…{}", self.keymap.hint(Action::Browse)), true).clicked() {
+        if full_button(ui, &format!("Choose the download folder…{}", self.keymap.hint(Action::Browse)), true).clicked()
+        {
             self.browse_folder();
         }
-        if full_button(ui, &format!("Open the download folder{}", self.keymap.hint(Action::OpenFolder)), true).clicked() {
+        if full_button(ui, &format!("Open the download folder{}", self.keymap.hint(Action::OpenFolder)), true).clicked()
+        {
             self.open_download_folder();
         }
 
@@ -148,11 +150,13 @@ impl PodApp {
         if self.new_version.is_some() && full_button(ui, "Open the download page", true).clicked() {
             self.open_release_page();
         }
-        let label = if self.checking_for_update { "Checking for a newer version…" } else { "Check for a newer version now" };
+        let label =
+            if self.checking_for_update { "Checking for a newer version…" } else { "Check for a newer version now" };
         if full_button(ui, label, !self.checking_for_update).clicked() {
             self.check_for_update();
         }
-        if ui.checkbox(&mut self.settings.check_for_updates, "Check for a newer version when the app starts").changed() {
+        if ui.checkbox(&mut self.settings.check_for_updates, "Check for a newer version when the app starts").changed()
+        {
             self.save_settings();
         }
     }

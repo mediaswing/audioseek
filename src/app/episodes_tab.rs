@@ -35,7 +35,9 @@ impl PodApp {
     fn no_episodes(&mut self) -> bool {
         let reason = match self.current_podcast() {
             None => Some("There are no feeds yet. Import an OPML file first.".to_owned()),
-            Some((feed, None)) => Some(format!("{} hasn't been fetched yet{}.", feed.name(), self.keymap.hint(Action::RefreshFeed))),
+            Some((feed, None)) => {
+                Some(format!("{} hasn't been fetched yet{}.", feed.name(), self.keymap.hint(Action::RefreshFeed)))
+            }
             Some((_, Some(p))) if p.episodes.is_empty() => Some("This podcast has no episodes to download.".to_owned()),
             _ => None,
         };
@@ -153,13 +155,12 @@ impl PodApp {
             let text = match error {
                 Some(e) => format!("Could not fetch this podcast: {e}"),
                 None if self.job.as_ref().is_some_and(|j| j.kind == JobKind::Fetching) => "Fetching…".to_owned(),
-                None if disabled => {
-                    "This podcast is disabled in feeds.json, so it isn't fetched by itself.".to_owned()
-                }
+                None if disabled => "This podcast is disabled in feeds.json, so it isn't fetched by itself.".to_owned(),
                 None => "This podcast hasn't been fetched yet.".to_owned(),
             };
             ui.label(text);
-            if full_button(ui, &format!("Fetch this podcast{}", self.keymap.hint(Action::RefreshFeed)), !busy).clicked() {
+            if full_button(ui, &format!("Fetch this podcast{}", self.keymap.hint(Action::RefreshFeed)), !busy).clicked()
+            {
                 self.fetch_selected();
             }
             self.drop_episode_focus();
@@ -212,16 +213,16 @@ impl PodApp {
             return;
         }
         if self.shown_count_changed(shown.len()) && !self.filter.trim().is_empty() {
-            self.announce(format!("{} {}.", plural(shown.len(), "episode"), if shown.len() == 1 { "matches" } else { "match" }));
+            self.announce(format!(
+                "{} {}.",
+                plural(shown.len(), "episode"),
+                if shown.len() == 1 { "matches" } else { "match" }
+            ));
         }
         ui.label("Space ticks or unticks an episode. Arrow keys move through the list.");
         // Where focus goes for the list's shortcut: the row last used, or
         // the first.
-        let focus_row = self
-            .episode_focus
-            .as_ref()
-            .and_then(|id| shown.iter().position(|e| &e.id == id))
-            .unwrap_or(0);
+        let focus_row = self.episode_focus.as_ref().and_then(|id| shown.iter().position(|e| &e.id == id)).unwrap_or(0);
         let url = self.library.feeds[self.selected].url.clone();
         for (i, episode) in shown.iter().enumerate() {
             let mut on = self.ticked.get(&url).is_some_and(|t| t.contains(&episode.id));

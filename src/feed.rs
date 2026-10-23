@@ -174,7 +174,9 @@ pub fn parse(xml: &str) -> anyhow::Result<Podcast> {
                     (Some(_), Some(Field::Date)) if item_date.is_empty() => item_date = value,
                     (Some(_), Some(Field::Updated)) if item_updated.is_empty() => item_updated = value,
                     (Some(ep), Some(Field::Duration)) => ep.duration = value,
-                    (None, Some(Field::Title)) if podcast.title.is_empty() => podcast.title = collapse_whitespace(&value),
+                    (None, Some(Field::Title)) if podcast.title.is_empty() => {
+                        podcast.title = collapse_whitespace(&value)
+                    }
                     (None, Some(Field::Link)) if podcast.website.is_empty() => podcast.website = value,
                     _ => {}
                 }
@@ -245,7 +247,8 @@ pub fn parse_date(s: &str) -> Option<DateTime<FixedOffset>> {
     let utc = FixedOffset::east_opt(0)?;
     for format in ["%d %b %Y %H:%M:%S", "%d %b %Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
         // The text may end in a zone name chrono doesn't know, such as "PST8".
-        let trimmed = without_day.rsplit_once(' ').filter(|_| format.matches(' ').count() < without_day.matches(' ').count());
+        let trimmed =
+            without_day.rsplit_once(' ').filter(|_| format.matches(' ').count() < without_day.matches(' ').count());
         for candidate in [Some(without_day), trimmed.map(|(head, _)| head)].into_iter().flatten() {
             if let Ok(naive) = NaiveDateTime::parse_from_str(candidate, format) {
                 return Some(naive.and_utc().with_timezone(&utc));

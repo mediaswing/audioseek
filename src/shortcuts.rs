@@ -184,7 +184,17 @@ pub fn check(shortcut: Shortcut, platform: Platform) -> Result<(), Conflict> {
     let function_key = function_key_number(key);
     let navigation = matches!(
         key,
-        Tab | Enter | Space | Backspace | Delete | ArrowUp | ArrowDown | ArrowLeft | ArrowRight | Home | End | PageUp
+        Tab | Enter
+            | Space
+            | Backspace
+            | Delete
+            | ArrowUp
+            | ArrowDown
+            | ArrowLeft
+            | ArrowRight
+            | Home
+            | End
+            | PageUp
             | PageDown
     );
     if key == Insert {

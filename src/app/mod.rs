@@ -156,11 +156,12 @@ impl PodApp {
             rep.spawn(worker::Job::UpdateCheck, |rep| worker::check_for_update(rep, false));
         }
         // Problems loading the files, worst first.
-        let problems: Vec<String> = [&library.load_error, &settings.load_error, &library.load_notice, &settings.load_notice]
-            .into_iter()
-            .flatten()
-            .cloned()
-            .collect();
+        let problems: Vec<String> =
+            [&library.load_error, &settings.load_error, &library.load_notice, &settings.load_notice]
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect();
         let mut app = Self {
             folder_input: settings.download_dir.display().to_string(),
             checking_for_update: settings.check_for_updates,
@@ -265,7 +266,10 @@ impl PodApp {
     /// Says that something else is running, if it is.
     fn refuse_if_busy(&mut self) -> bool {
         if self.is_busy() {
-            self.announce(format!("Please wait for the current job to finish, or cancel it{}.", self.keymap.hint(Action::Cancel)));
+            self.announce(format!(
+                "Please wait for the current job to finish, or cancel it{}.",
+                self.keymap.hint(Action::Cancel)
+            ));
         }
         self.is_busy()
     }
@@ -407,7 +411,10 @@ impl PodApp {
         match job {
             worker::Job::UpdateCheck => {
                 self.checking_for_update = false;
-                self.announce(format!("The check for a newer version stopped with an error. {} has the details.", log.display()));
+                self.announce(format!(
+                    "The check for a newer version stopped with an error. {} has the details.",
+                    log.display()
+                ));
             }
             worker::Job::Fetch | worker::Job::Download => {
                 self.job = None;
@@ -453,7 +460,9 @@ impl PodApp {
         let percent = (self.progress * 100.0).round();
         let text = match &self.job {
             Some(job) if job.kind == JobKind::Fetching => format!("Fetching feeds, {percent}% done."),
-            Some(job) => format!("Downloading {} of {}, {percent}% done overall. {}", job.current, job.total, job.title),
+            Some(job) => {
+                format!("Downloading {} of {}, {percent}% done overall. {}", job.current, job.total, job.title)
+            }
             None => "Nothing is fetching or downloading.".to_owned(),
         };
         self.announce(text);
@@ -589,7 +598,8 @@ impl PodApp {
         ui.columns(Tab::ALL.len(), |cols| {
             for (i, (col, tab)) in cols.iter_mut().zip(Tab::ALL).enumerate() {
                 let selected = self.tab == tab;
-                let text = RichText::new(format!("{}{}", tab.label(), self.keymap.tab_hint(i))).family(tab_font()).size(18.0);
+                let text =
+                    RichText::new(format!("{}{}", tab.label(), self.keymap.tab_hint(i))).family(tab_font()).size(18.0);
                 let text = if selected { text.strong() } else { text };
                 let resp = col
                     .push_id(tab.id(), |ui| {

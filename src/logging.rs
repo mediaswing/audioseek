@@ -119,7 +119,12 @@ pub fn init() {
         default_hook(info);
     }));
 
-    log::info!("audioseek {} started on {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+    log::info!(
+        "audioseek {} started on {} {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
 }
 
 #[cfg(test)]

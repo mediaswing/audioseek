@@ -91,11 +91,7 @@ pub fn build(out_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
         bail!("pkgbuild could not build the component package");
     }
 
-    let pkg = out_dir.join(format!(
-        "audioseek-{}-macos-{}.pkg",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::ARCH
-    ));
+    let pkg = out_dir.join(format!("audioseek-{}-macos-{}.pkg", env!("CARGO_PKG_VERSION"), std::env::consts::ARCH));
     if pkg.exists() {
         std::fs::remove_file(&pkg)?;
     }

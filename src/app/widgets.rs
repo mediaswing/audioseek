@@ -25,11 +25,7 @@ fn setup_fonts(ctx: &egui::Context) {
         Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/GoogleSans-Bold.ttf"))),
     );
     let fallbacks = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    fonts
-        .families
-        .entry(FontFamily::Proportional)
-        .or_default()
-        .insert(0, "GoogleSans-Medium".into());
+    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "GoogleSans-Medium".into());
     let mut tab = vec!["GoogleSans-Bold".to_owned()];
     tab.extend(fallbacks);
     fonts.families.insert(tab_font(), tab);
@@ -65,8 +61,7 @@ pub(super) fn heading(ui: &mut Ui, text: &str) {
 }
 
 pub(super) fn full_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Response {
-    ui.add_enabled_ui(enabled, |ui| ui.add_sized([ui.available_width(), CONTROL_HEIGHT], Button::new(text)))
-        .inner
+    ui.add_enabled_ui(enabled, |ui| ui.add_sized([ui.available_width(), CONTROL_HEIGHT], Button::new(text))).inner
 }
 
 /// A labelled, full-width, one-line text box. `id` keeps it the same box

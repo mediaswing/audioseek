@@ -51,11 +51,8 @@ pub fn download(
     mut progress: impl FnMut(u64, Option<u64>),
 ) -> anyhow::Result<()> {
     let response = agent().get(url).call().with_context(|| format!("could not download {url}"))?;
-    let total = response
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok());
+    let total =
+        response.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
     let mut reader = response.into_body().into_reader();
     let mut part = dest.as_os_str().to_owned();
     part.push(".part");
@@ -165,7 +162,8 @@ mod tests {
         let dest = dir.path().join("episode.mp3");
         let mut last = (0, None);
         let cancel = AtomicBool::new(false);
-        super::download(&format!("{server}/track?to=episode"), &dest, &cancel, |got, total| last = (got, total)).unwrap();
+        super::download(&format!("{server}/track?to=episode"), &dest, &cancel, |got, total| last = (got, total))
+            .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), body);
         assert_eq!(last, (body.len() as u64, Some(body.len() as u64)));
         assert_eq!(files(dir.path()), ["episode.mp3"], "no .part file is left");
