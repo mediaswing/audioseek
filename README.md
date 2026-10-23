@@ -32,6 +32,11 @@ episodes have been downloaded, so the list survives losing the OPML file
 `~/Library/Application Support/AudioSeek` on macOS and `~/.config/audioseek`
 on Linux, beside `settings.json`.
 
+To leave a feed out of "Fetch every feed", add `"disabled": true` to it in
+`feeds.json` while the app is closed. A disabled feed stays in the list,
+marked as disabled, and isn't fetched when it is shown on the Episodes tab
+either; choosing it and fetching just that feed (F5) still works.
+
 ## Log file and updates
 
 Warnings, errors and crashes are written to `audioseek.log` in the same

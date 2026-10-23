@@ -160,12 +160,16 @@ impl PodApp {
         let busy = self.is_busy();
         let Some((feed, podcast)) = self.current_podcast() else { return };
         let fetched = feed.fetched_text();
+        let disabled = feed.disabled;
         let downloaded = feed.downloaded.clone();
         let error = self.fetch_errors.get(&feed.url).cloned();
         let Some(podcast) = podcast else {
             let text = match error {
                 Some(e) => format!("Could not fetch this podcast: {e}"),
                 None if self.job.as_ref().is_some_and(|j| j.kind == JobKind::Fetching) => "Fetching…".to_owned(),
+                None if disabled => {
+                    "This podcast is disabled in feeds.json, so it isn't fetched by itself.".to_owned()
+                }
                 None => "This podcast hasn't been fetched yet.".to_owned(),
             };
             ui.label(text);

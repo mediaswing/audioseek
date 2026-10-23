@@ -118,9 +118,11 @@ impl PodApp {
     }
 
     pub(super) fn fetch_all(&mut self) {
-        let urls: Vec<String> = self.library.feeds.iter().map(|f| f.url.clone()).collect();
-        if urls.is_empty() {
+        let urls: Vec<String> = self.library.feeds.iter().filter(|f| !f.disabled).map(|f| f.url.clone()).collect();
+        if self.library.feeds.is_empty() {
             self.announce("There are no feeds to fetch.");
+        } else if urls.is_empty() {
+            self.announce("Every feed is disabled in feeds.json, so there are none to fetch.");
         }
         self.fetch(urls);
     }
@@ -129,6 +131,7 @@ impl PodApp {
     /// episodes can be listed.
     pub(super) fn fetch_if_needed(&mut self) {
         if let Some(feed) = self.library.feeds.get(self.selected)
+            && !feed.disabled
             && !self.podcasts.contains_key(&feed.url)
             && !self.fetch_errors.contains_key(&feed.url)
             && !self.is_busy()
@@ -141,6 +144,9 @@ impl PodApp {
     /// One feed's line in the list.
     fn feed_line(&self, feed: &Feed) -> String {
         let mut line = feed.name().to_owned();
+        if feed.disabled {
+            line.push_str(", disabled");
+        }
         if let Some(podcast) = self.podcasts.get(&feed.url) {
             let n = podcast.episodes.len();
             line.push_str(&format!(", {n} episode{}", if n == 1 { "" } else { "s" }));

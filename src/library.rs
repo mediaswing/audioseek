@@ -22,11 +22,16 @@ pub struct Feed {
     /// downloaded, so they can be left out next time.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub downloaded: BTreeSet<String>,
+    /// Set by hand in `feeds.json` to leave the feed out of fetching every
+    /// feed and of fetching on its own when shown. It can still be fetched
+    /// by choosing it and fetching just that one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 impl Feed {
     pub fn new(url: String, title: String, website: String) -> Self {
-        Feed { url, title, website, added: Utc::now(), last_fetched: None, downloaded: BTreeSet::new() }
+        Feed { url, title, website, added: Utc::now(), last_fetched: None, downloaded: BTreeSet::new(), disabled: false }
     }
 
     /// The name shown in lists: its title, or its address if it has none yet.
@@ -182,5 +187,15 @@ mod tests {
         let back: Library = serde_json::from_str(&json).unwrap();
         assert_eq!(back.feeds[0].downloaded.len(), 1);
         assert_eq!(back.feeds[0].last_fetched, lib.feeds[0].last_fetched);
+        assert!(!back.feeds[0].disabled);
+        assert!(!json.contains("disabled"), "only disabled feeds say so");
+    }
+
+    #[test]
+    fn disabled_is_read_and_kept() {
+        let json = r#"{"feeds":[{"url":"https://example.com/feed","title":"","added":"2026-10-23T14:05:00Z","disabled":true}]}"#;
+        let lib: Library = serde_json::from_str(json).unwrap();
+        assert!(lib.feeds[0].disabled);
+        assert!(serde_json::to_string(&lib).unwrap().contains(r#""disabled":true"#));
     }
 }
