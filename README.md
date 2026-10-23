@@ -100,8 +100,14 @@ them, so the Mac gets Cmd+8 and Cmd+9 instead.
 
 ## Tests
 
-`cargo test` runs the offline tests. `cargo test -- --ignored` also fetches
-some real feeds and downloads one episode.
+`cargo test` runs the offline tests, which include downloading from a small
+web server the tests start themselves. `cargo test -- --ignored` also
+fetches some real feeds and downloads one episode.
+
+Every push to `main` and every pull request is checked by
+`.github/workflows/check.yml`: `cargo fmt --check` (formatted as
+`rustfmt.toml` says), `cargo clippy --all-targets -- -D warnings`, and the
+tests on Windows, Ubuntu and macOS.
 
 ## Licence
 
