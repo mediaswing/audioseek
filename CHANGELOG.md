@@ -7,6 +7,10 @@
 - Warnings, errors and crashes are written to `audioseek.log`, beside `feeds.json`. The Settings tab shows where it is.
 - When it starts, the app checks GitHub for a newer version and says if there is one. The Settings tab has a button to open the download page, a button to check straight away, and a setting to stop checking.
 
+### Changed
+
+- Pressing Escape (or whichever key Cancel uses) now asks before stopping a fetch or download. The Cancel button still stops it straight away.
+
 ## [1.0.0] - 2026-10-23
 
 ### Added

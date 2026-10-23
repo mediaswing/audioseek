@@ -265,6 +265,19 @@ impl PodApp {
         }
     }
 
+    /// Cancels after asking first, for the Cancel shortcut: Escape is easy
+    /// to press by mistake, unlike the Cancel button.
+    fn confirm_cancel(&mut self) {
+        let Some(job) = &self.job else { return };
+        let question = match job.kind {
+            JobKind::Fetching => "Stop fetching feeds?",
+            JobKind::Downloading => "Stop downloading? Episodes already downloaded are kept.",
+        };
+        if self.confirm(question) {
+            self.cancel();
+        }
+    }
+
     /// Fetches the feeds at `urls` in the background.
     fn fetch(&mut self, urls: Vec<String>) {
         if urls.is_empty() || self.refuse_if_busy() {
@@ -459,7 +472,7 @@ impl PodApp {
                 let status = self.status.trim_end_matches('\u{a0}').to_owned();
                 self.announce(status);
             }
-            Action::Cancel => self.cancel(),
+            Action::Cancel => self.confirm_cancel(),
             Action::ImportOpml => self.import_opml(),
             Action::ExportOpml => self.export_opml(),
             Action::FeedAddress => self.focus = Some(Target::FeedAddress),
