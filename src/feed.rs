@@ -3,6 +3,7 @@
 use anyhow::{Context, bail};
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use quick_xml::events::{BytesStart, Event};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Episode {
@@ -200,6 +201,17 @@ pub fn parse(xml: &str) -> anyhow::Result<Podcast> {
     if !is_feed {
         bail!("this address is not a podcast feed");
     }
+    // Some feeds give two items the same GUID. A repeat of an episode is
+    // dropped; a different episode is told apart by its audio address.
+    let mut seen: HashMap<String, String> = HashMap::new();
+    podcast.episodes.retain_mut(|ep| {
+        match seen.get(&ep.id) {
+            None => {}
+            Some(url) if *url == ep.url => return false,
+            Some(_) => ep.id = format!("{} {}", ep.id, ep.url),
+        }
+        seen.insert(ep.id.clone(), ep.url.clone()).is_none()
+    });
     // Newest first; episodes without a date go last, in feed order.
     podcast.episodes.sort_by_key(|e| std::cmp::Reverse(e.published));
     Ok(podcast)
@@ -325,6 +337,19 @@ mod tests {
         assert_eq!(p.website, "https://atom.example/");
         assert_eq!(p.episodes[0].url, "https://atom.example/1.mp3");
         assert_eq!(p.episodes[0].published.unwrap().to_rfc3339(), "2024-01-02T03:04:05-05:00");
+    }
+
+    #[test]
+    fn repeated_guids() {
+        let rss = r#"<rss><channel><title>Show</title>
+          <item><title>One</title><guid>same</guid><enclosure url="https://x/1.mp3"/></item>
+          <item><title>One again</title><guid>same</guid><enclosure url="https://x/1.mp3"/></item>
+          <item><title>Two</title><guid>same</guid><enclosure url="https://x/2.mp3"/></item>
+        </channel></rss>"#;
+        let p = parse(rss).unwrap();
+        let ids: Vec<&str> = p.episodes.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["same", "same https://x/2.mp3"]);
+        assert_eq!(p.episodes[0].title, "One");
     }
 
     #[test]

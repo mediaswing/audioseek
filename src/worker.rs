@@ -2,8 +2,7 @@
 //! Results come back to the window as messages.
 
 use crate::feed::{Episode, Podcast};
-use crate::settings::{Naming, Settings};
-use std::collections::HashSet;
+use crate::settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -95,41 +94,31 @@ pub struct Download {
     pub feed_url: String,
     pub podcast_title: String,
     pub episode: Episode,
+    /// From `naming::file_names`, so it is unique among the podcast's
+    /// episodes.
+    pub file_name: String,
 }
 
-/// Where downloads go and how they are named, fixed when the batch starts.
+/// Where downloads go, fixed when the batch starts.
 #[derive(Clone)]
 pub struct Target {
     pub dir: PathBuf,
-    pub naming: Naming,
     pub folder_per_podcast: bool,
 }
 
 impl From<&Settings> for Target {
     fn from(s: &Settings) -> Self {
-        Target { dir: s.download_dir.clone(), naming: s.naming, folder_per_podcast: s.folder_per_podcast }
+        Target { dir: s.download_dir.clone(), folder_per_podcast: s.folder_per_podcast }
     }
 }
 
 impl Target {
-    /// The file for `item`. Two episodes in this batch that would have the
-    /// same name (published the same second, say) get " (2)" and so on, so
-    /// neither is lost.
-    fn path(&self, item: &Download, claimed: &mut HashSet<PathBuf>) -> PathBuf {
+    fn path(&self, item: &Download) -> PathBuf {
         let mut dir = self.dir.clone();
         if self.folder_per_podcast {
             dir.push(crate::naming::folder_name(&item.podcast_title));
         }
-        let name = crate::naming::file_name(&item.episode, self.naming);
-        let mut path = dir.join(&name);
-        let (stem, ext) = name.rsplit_once('.').unwrap_or((&name, ""));
-        let mut n = 2;
-        while claimed.contains(&path) {
-            path = dir.join(format!("{stem} ({n}).{ext}"));
-            n += 1;
-        }
-        claimed.insert(path.clone());
-        path
+        dir.join(&item.file_name)
     }
 }
 
@@ -137,7 +126,6 @@ impl Target {
 /// the same name is left alone.
 pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc<AtomicBool>) {
     let count = items.len().max(1);
-    let mut claimed = HashSet::new();
     for (i, item) in items.into_iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             rep.send(Msg::DownloadsDone { cancelled: true });
@@ -145,7 +133,7 @@ pub fn download(rep: Reporter, items: Vec<Download>, target: Target, cancel: Arc
         }
         rep.send(Msg::Downloading(i + 1, item.episode.title.clone()));
         rep.send(Msg::Progress(i as f32 / count as f32));
-        let path = target.path(&item, &mut claimed);
+        let path = target.path(&item);
         let outcome = if path.exists() {
             Outcome::AlreadyThere(path)
         } else {

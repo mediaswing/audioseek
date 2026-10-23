@@ -151,7 +151,8 @@ impl PodApp {
         if settings.check_for_updates {
             rep.spawn(|rep| worker::check_for_update(rep, false));
         }
-        Self {
+        let load_error = library.load_error.clone();
+        let mut app = Self {
             folder_input: settings.download_dir.display().to_string(),
             checking_for_update: settings.check_for_updates,
             settings,
@@ -175,7 +176,11 @@ impl PodApp {
             pending: Vec::new(),
             tab_buttons: Vec::new(),
             new_version: None,
+        };
+        if let Some(e) = load_error {
+            app.show_error(e);
         }
+        app
     }
 
     fn announce(&mut self, text: impl Into<String>) {
@@ -215,6 +220,11 @@ impl PodApp {
     }
 
     fn save_library(&mut self) {
+        // The user was told at startup that it can't be saved.
+        if self.library.load_error.is_some() {
+            log::warn!("not saving the list of feeds, which couldn't be read");
+            return;
+        }
         if let Err(e) = self.library.save() {
             self.show_error(format!("Could not save the list of feeds: {e}"));
         }

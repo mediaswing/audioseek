@@ -47,25 +47,51 @@ impl Feed {
 pub struct Library {
     #[serde(default)]
     pub feeds: Vec<Feed>,
+    /// Why the file couldn't be read when the app started, if it is there
+    /// but couldn't be (locked by another program, say). It is then never
+    /// saved over, so the feeds in it aren't lost.
+    #[serde(skip)]
+    pub load_error: Option<String>,
 }
 
 impl Library {
     pub fn load() -> Self {
-        let path = crate::paths::feeds_file();
-        match std::fs::read(&path) {
+        Self::load_from(&crate::paths::feeds_file())
+    }
+
+    fn load_from(path: &std::path::Path) -> Self {
+        match std::fs::read(path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
                 // Keep the damaged file rather than overwrite it on the next save.
                 log::warn!("could not read {}: {e}", path.display());
-                let _ = std::fs::rename(&path, path.with_extension("json.damaged"));
+                let _ = std::fs::rename(path, path.with_extension("json.damaged"));
                 Library::default()
             }),
-            Err(_) => Library::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Library::default(),
+            Err(e) => {
+                log::error!("could not read {}: {e}", path.display());
+                Library {
+                    load_error: Some(format!(
+                        "Could not read the list of feeds in {}: {e}. It has been left as it is, and changes \
+                         to the list won't be saved until the app is started again.",
+                        path.display()
+                    )),
+                    ..Library::default()
+                }
+            }
         }
     }
 
     pub fn save(&self) -> std::io::Result<()> {
+        self.save_to(&crate::paths::feeds_file())
+    }
+
+    fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if self.load_error.is_some() {
+            return Err(std::io::Error::other("the list of feeds couldn't be read, so it isn't saved over"));
+        }
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        crate::paths::write_atomic(&crate::paths::feeds_file(), &json)
+        crate::paths::write_atomic(path, &json)
     }
 
     pub fn find(&self, url: &str) -> Option<usize> {
@@ -126,6 +152,23 @@ mod tests {
         // Only the host name is case-insensitive.
         let c = Feed::new("https://example.com/FEED".into(), String::new(), String::new());
         assert_eq!(lib.add_all(vec![c]), 1);
+    }
+
+    #[test]
+    fn unreadable_file_is_not_saved_over() {
+        let dir = tempfile::tempdir().unwrap();
+        // A missing file is a fresh start, and can be saved.
+        let missing = Library::load_from(&dir.path().join("feeds.json"));
+        assert!(missing.load_error.is_none());
+        missing.save_to(&dir.path().join("feeds.json")).unwrap();
+        // A folder where the file should be can't be read, like a locked file.
+        let blocked = dir.path().join("blocked.json");
+        std::fs::create_dir(&blocked).unwrap();
+        let mut lib = Library::load_from(&blocked);
+        assert!(lib.load_error.is_some());
+        lib.feeds.push(Feed::new("https://example.com/feed".into(), String::new(), String::new()));
+        assert!(lib.save_to(&blocked).is_err());
+        assert!(blocked.is_dir());
     }
 
     #[test]

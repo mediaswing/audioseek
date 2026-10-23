@@ -119,9 +119,18 @@ impl PodApp {
         let Some(feed) = self.library.feeds.get(self.selected) else { return };
         let feed_url = feed.url.clone();
         let podcast_title = feed.name().to_owned();
+        let Some(podcast) = self.podcasts.get(&feed_url) else { return };
+        let mut names = crate::naming::file_names(&podcast.episodes, self.settings.naming);
         let items: Vec<Download> = episodes
             .into_iter()
-            .map(|episode| Download { feed_url: feed_url.clone(), podcast_title: podcast_title.clone(), episode })
+            .map(|episode| Download {
+                feed_url: feed_url.clone(),
+                podcast_title: podcast_title.clone(),
+                file_name: names
+                    .remove(&episode.id)
+                    .unwrap_or_else(|| crate::naming::file_name(&episode, self.settings.naming)),
+                episode,
+            })
             .collect();
         let count = items.len();
         let target = DownloadTarget::from(&self.settings);
