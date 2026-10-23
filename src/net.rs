@@ -93,7 +93,7 @@ pub fn download(
 #[cfg(test)]
 pub mod test_server {
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
 
     /// Serves `responses` in turn, one to each connection, and returns the
     /// server's address, such as `http://127.0.0.1:50000`. It stops after
@@ -104,15 +104,7 @@ pub mod test_server {
         std::thread::spawn(move || {
             for response in responses {
                 let Ok((mut stream, _)) = listener.accept() else { return };
-                // The request's headers; there is never a body.
-                let mut request = Vec::new();
-                let mut buf = [0u8; 1024];
-                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match stream.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => request.extend_from_slice(&buf[..n]),
-                    }
-                }
+                read_request(&mut stream);
                 // The client may have hung up, as a cancelled download does.
                 let _ = stream.write_all(&response);
             }
@@ -130,15 +122,8 @@ pub mod test_server {
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
-                let mut request = Vec::new();
-                let mut buf = [0u8; 1024];
-                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match stream.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => request.extend_from_slice(&buf[..n]),
-                    }
-                }
                 // "GET /path HTTP/1.1"
+                let request = read_request(&mut stream);
                 let request = String::from_utf8_lossy(&request);
                 let path = request.split_whitespace().nth(1).unwrap_or("");
                 let not_found = response("404 Not Found", &[], b"");
@@ -147,6 +132,19 @@ pub mod test_server {
             }
         });
         format!("http://{addr}")
+    }
+
+    /// Reads a request's headers; there is never a body.
+    fn read_request(stream: &mut TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => request.extend_from_slice(&buf[..n]),
+            }
+        }
+        request
     }
 
     /// A response with `status`, such as "200 OK", the headers given, and

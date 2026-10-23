@@ -30,6 +30,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
+use std::time::{Duration, Instant};
 use widgets::*;
 
 const CONTROL_HEIGHT: f32 = 36.0;
@@ -37,6 +38,11 @@ const CONTROL_HEIGHT: f32 = 36.0;
 /// "1 feed" or "3 feeds".
 fn plural(n: usize, noun: &str) -> String {
     if n == 1 { format!("1 {noun}") } else { format!("{n} {noun}s") }
+}
+
+/// "the 1 episode" or "all 3 episodes", as in "Download all 3 episodes".
+fn all_episodes(n: usize) -> String {
+    if n == 1 { "the 1 episode".to_owned() } else { format!("all {n} episodes") }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -137,6 +143,33 @@ pub struct PodApp {
     /// A newer version found on GitHub.
     new_version: Option<String>,
     checking_for_update: bool,
+    /// When the list of feeds is next saved while feeds are fetched.
+    library_save: SaveSchedule,
+}
+
+/// When to save `feeds.json` while feeds are being fetched: not after every
+/// feed, which is slow with a long list, but at most every few seconds, and
+/// whatever is left once the fetch ends or the app closes.
+#[derive(Default)]
+struct SaveSchedule {
+    /// There are changes that haven't been saved.
+    unsaved: bool,
+    last_saved: Option<Instant>,
+}
+
+impl SaveSchedule {
+    const INTERVAL: Duration = Duration::from_secs(5);
+
+    /// Notes a change, and says whether to save it now.
+    fn changed(&mut self, now: Instant) -> bool {
+        self.unsaved = true;
+        self.last_saved.is_none_or(|at| now.duration_since(at) >= Self::INTERVAL)
+    }
+
+    fn saved(&mut self, now: Instant) {
+        self.unsaved = false;
+        self.last_saved = Some(now);
+    }
 }
 
 impl PodApp {
@@ -186,6 +219,7 @@ impl PodApp {
             pending: Vec::new(),
             tab_buttons: Vec::new(),
             new_version: None,
+            library_save: SaveSchedule::default(),
         };
         if !problems.is_empty() {
             app.show_error(problems.join("\n\n"));
@@ -238,24 +272,28 @@ impl PodApp {
     }
 
     fn save_library(&mut self) {
-        // The user was told at startup that it can't be saved.
-        if self.library.load_error.is_some() {
-            log::warn!("not saving the list of feeds, which couldn't be read");
-            return;
+        match self.library.save() {
+            Ok(true) => {}
+            // The user was told at startup that it can't be saved.
+            Ok(false) => log::warn!("not saving the list of feeds, which couldn't be read"),
+            Err(e) => self.show_error(format!("Could not save the list of feeds: {e}")),
         }
-        if let Err(e) = self.library.save() {
-            self.show_error(format!("Could not save the list of feeds: {e}"));
+        self.library_save.saved(Instant::now());
+    }
+
+    /// Saves the list of feeds if it has changes not yet saved.
+    fn save_library_if_changed(&mut self) {
+        if self.library_save.unsaved {
+            self.save_library();
         }
     }
 
     fn save_settings(&mut self) {
-        // The user was told at startup that they can't be saved.
-        if self.settings.load_error.is_some() {
-            log::warn!("not saving the settings, which couldn't be read");
-            return;
-        }
-        if let Err(e) = self.settings.save() {
-            self.show_error(format!("Could not save the settings: {e}"));
+        match self.settings.save() {
+            Ok(true) => {}
+            // The user was told at startup that they can't be saved.
+            Ok(false) => log::warn!("not saving the settings, which couldn't be read"),
+            Err(e) => self.show_error(format!("Could not save the settings: {e}")),
         }
     }
 
@@ -327,8 +365,7 @@ impl PodApp {
                 Msg::FeedFetched(url, result) => self.feed_fetched(url, result),
                 Msg::RefreshDone { fetched, failed, cancelled } => {
                     self.job = None;
-                    // Saved once for the whole refresh, not once a feed.
-                    self.save_library();
+                    self.save_library_if_changed();
                     let mut text = format!("Fetched {}.", plural(fetched, "feed"));
                     if failed > 0 {
                         text.push_str(&format!(" {failed} could not be fetched; the feed list says which."));
@@ -362,6 +399,9 @@ impl PodApp {
                 self.library.feeds[i].fetched(&podcast, chrono::Utc::now());
                 self.fetch_errors.remove(&url);
                 self.podcasts.insert(url, podcast);
+                if self.library_save.changed(Instant::now()) {
+                    self.save_library();
+                }
             }
             Err(e) => {
                 self.fetch_errors.insert(url, e);
@@ -418,7 +458,7 @@ impl PodApp {
             }
             worker::Job::Fetch | worker::Job::Download => {
                 self.job = None;
-                self.save_library();
+                self.save_library_if_changed();
                 let what = if job == worker::Job::Fetch { "Fetching feeds" } else { "Downloading" };
                 self.show_error(format!(
                     "{what} stopped with an error. Anything finished before then has been kept. The log file, {}, \
@@ -665,6 +705,17 @@ impl PodApp {
 }
 
 impl eframe::App for PodApp {
+    /// Saves what a fetch still running has found so far.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.library_save.unsaved {
+            match self.library.save() {
+                Ok(_) => log::info!("saved the list of feeds on closing"),
+                // Too late for a dialog.
+                Err(e) => log::error!("could not save the list of feeds on closing: {e}"),
+            }
+        }
+    }
+
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.take_shortcuts(ctx, raw_input);
     }
@@ -706,5 +757,32 @@ impl eframe::App for PodApp {
         }
 
         draw_focus_ring(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetched_feeds_are_saved_every_few_seconds() {
+        let start = Instant::now();
+        let mut schedule = SaveSchedule::default();
+        assert!(schedule.changed(start), "the first change is saved straight away");
+        schedule.saved(start);
+        assert!(!schedule.unsaved);
+        assert!(!schedule.changed(start + Duration::from_secs(1)));
+        assert!(!schedule.changed(start + Duration::from_secs(4)));
+        assert!(schedule.unsaved, "left for the end of the fetch or closing");
+        assert!(schedule.changed(start + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn plurals() {
+        assert_eq!(plural(0, "feed"), "0 feeds");
+        assert_eq!(plural(1, "feed"), "1 feed");
+        assert_eq!(plural(2, "new feed"), "2 new feeds");
+        assert_eq!(all_episodes(1), "the 1 episode");
+        assert_eq!(all_episodes(3), "all 3 episodes");
     }
 }

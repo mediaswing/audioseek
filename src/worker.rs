@@ -5,9 +5,9 @@ use crate::feed::{Episode, Podcast};
 use crate::library::{Feed, Library};
 use crate::settings::{Naming, Settings};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// The least time between progress messages while an episode downloads.
@@ -116,7 +116,9 @@ const FETCHERS: usize = 6;
 pub fn refresh(rep: Reporter, urls: Vec<String>, cancel: Arc<AtomicBool>) {
     let count = urls.len();
     let next = AtomicUsize::new(0);
-    let done = AtomicUsize::new(0);
+    // How many have finished. Counted and reported under the lock, so the
+    // progress messages arrive in order and the last is 100%.
+    let done = Mutex::new(0usize);
     let fetched = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..FETCHERS.min(count) {
@@ -131,9 +133,10 @@ pub fn refresh(rep: Reporter, urls: Vec<String>, cancel: Arc<AtomicBool>) {
                     if result.is_ok() {
                         fetched.fetch_add(1, Ordering::Relaxed);
                     }
-                    let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    let mut done = done.lock().unwrap_or_else(|e| e.into_inner());
+                    *done += 1;
                     rep.send(Msg::FeedFetched(url.clone(), result));
-                    rep.send(Msg::Progress(finished as f32 / count as f32));
+                    rep.send(Msg::Progress(*done as f32 / count as f32));
                 }
             };
             // A thread that can't start crashes the job, which says so.
@@ -143,7 +146,8 @@ pub fn refresh(rep: Reporter, urls: Vec<String>, cancel: Arc<AtomicBool>) {
                 .expect("could not start a thread to fetch feeds");
         }
     });
-    let (done, fetched) = (done.into_inner(), fetched.into_inner());
+    let done = done.into_inner().unwrap_or_else(|e| e.into_inner());
+    let fetched = fetched.into_inner();
     rep.send(Msg::RefreshDone { fetched, failed: done - fetched, cancelled: done < count });
 }
 
@@ -391,7 +395,8 @@ mod tests {
         let progress: Vec<f32> =
             msgs.iter().filter_map(|m| if let Msg::Progress(p) = m { Some(*p) } else { None }).collect();
         assert_eq!(progress.len(), 10);
-        assert_eq!(progress.iter().cloned().fold(0.0, f32::max), 1.0);
+        assert!(progress.windows(2).all(|w| w[0] < w[1]), "never goes backwards: {progress:?}");
+        assert_eq!(progress.last(), Some(&1.0));
     }
 
     #[test]

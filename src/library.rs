@@ -145,16 +145,19 @@ impl Library {
         }
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
+    /// Saves the list, and says whether it did: not if the file couldn't
+    /// be read at startup (see `load_error`), so it isn't saved over.
+    pub fn save(&self) -> std::io::Result<bool> {
         self.save_to(&crate::paths::feeds_file())
     }
 
-    fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+    fn save_to(&self, path: &std::path::Path) -> std::io::Result<bool> {
         if self.load_error.is_some() {
-            return Err(std::io::Error::other("the list of feeds couldn't be read, so it isn't saved over"));
+            return Ok(false);
         }
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        crate::paths::write_atomic(path, &json)
+        crate::paths::write_atomic(path, &json)?;
+        Ok(true)
     }
 
     pub fn find(&self, url: &str) -> Option<usize> {
@@ -223,10 +226,18 @@ fn same_url(a: &str, b: &str) -> bool {
     key(a) == key(b)
 }
 
-/// Whether two folders are the same, ignoring letter case (as Windows and
-/// macOS do) and a trailing separator.
+/// Whether two folders are the same, ignoring a trailing separator and, on
+/// Windows and macOS, whose file systems do, letter case.
 fn same_dir(a: &Path, b: &Path) -> bool {
-    let parts = |p: &Path| p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect::<Vec<_>>();
+    let ignore_case = cfg!(any(windows, target_os = "macos"));
+    let parts = |p: &Path| {
+        p.components()
+            .map(|c| {
+                let part = c.as_os_str().to_string_lossy();
+                if ignore_case { part.to_lowercase() } else { part.into_owned() }
+            })
+            .collect::<Vec<_>>()
+    };
     parts(a) == parts(b)
 }
 
@@ -286,14 +297,14 @@ mod tests {
         // A missing file is a fresh start, and can be saved.
         let missing = Library::load_from(&dir.path().join("feeds.json"));
         assert!(missing.load_error.is_none());
-        missing.save_to(&dir.path().join("feeds.json")).unwrap();
+        assert!(missing.save_to(&dir.path().join("feeds.json")).unwrap());
         // A folder where the file should be can't be read, like a locked file.
         let blocked = dir.path().join("blocked.json");
         std::fs::create_dir(&blocked).unwrap();
         let mut lib = Library::load_from(&blocked);
         assert!(lib.load_error.is_some());
         lib.feeds.push(Feed::new("https://example.com/feed".into(), String::new(), String::new()));
-        assert!(lib.save_to(&blocked).is_err());
+        assert!(!lib.save_to(&blocked).unwrap(), "not saved");
         assert!(blocked.is_dir());
     }
 
@@ -339,14 +350,20 @@ mod tests {
         b.files.insert("b1".into(), saved("Pilot.MP3"));
         lib.feeds = vec![a, b];
 
-        // The folder typed differently, as Windows and macOS allow.
-        let typed = std::path::PathBuf::from(format!("{}/", shared.to_string_lossy().to_uppercase()));
+        // The folder with a trailing separator.
+        let typed = std::path::PathBuf::from(format!("{}/", shared.to_string_lossy()));
         let r = lib.reserved_names("https://b.example/feed", &typed);
         assert_eq!(r.own.len(), 1);
         assert_eq!(r.own["b1"], "Pilot.MP3");
         assert_eq!(r.taken.len(), 2, "not the file in another folder");
         assert_eq!(r.taken["pilot.mp3"], Some("b1".to_owned()));
         assert_eq!(r.taken["2026-10-23-00-00-00.mp3"], None, "another podcast's");
+
+        // Typed in other letters: the same folder on Windows and macOS, and
+        // a different one on Linux.
+        let upper = std::path::PathBuf::from(shared.to_string_lossy().to_uppercase());
+        let r = lib.reserved_names("https://b.example/feed", &upper);
+        assert_eq!(r.taken.len(), if cfg!(any(windows, target_os = "macos")) { 2 } else { 0 });
     }
 
     #[test]

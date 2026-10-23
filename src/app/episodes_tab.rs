@@ -14,7 +14,7 @@ impl PodApp {
     /// The episodes whose titles match the filter.
     fn shown_episodes(&self) -> Vec<&Episode> {
         let Some((_, Some(podcast))) = self.current_podcast() else { return Vec::new() };
-        matching(podcast, &self.filter).collect()
+        matching(Some(podcast), &self.filter).map(|(_, e)| e).collect()
     }
 
     fn ticked_here(&mut self) -> Option<&mut HashSet<String>> {
@@ -106,7 +106,7 @@ impl PodApp {
         let episodes = podcast.episodes.clone();
         let question = format!(
             "Download {} of {} to {}? Episodes already in the folder are skipped.",
-            if episodes.len() == 1 { "the 1 episode".to_owned() } else { format!("all {} episodes", episodes.len()) },
+            all_episodes(episodes.len()),
             feed.name(),
             self.settings.download_dir.display()
         );
@@ -172,8 +172,11 @@ impl PodApp {
         let resp = text_field(ui, field_id(Target::Filter), &label, &mut self.filter, true);
         self.focus_if_wanted(Target::Filter, &resp);
 
-        let any =
-            self.current_podcast().and_then(|(_, p)| p).is_some_and(|p| matching(p, &self.filter).next().is_some());
+        // Where in the podcast's list the episodes matching the filter are,
+        // worked out once a frame.
+        let shown: Vec<usize> =
+            matching(self.current_podcast().and_then(|(_, p)| p), &self.filter).map(|(i, _)| i).collect();
+        let any = !shown.is_empty();
         let ticked_count = self.ticked_here().map_or(0, |t| t.len());
         if full_button(ui, &format!("Tick every episode shown{}", self.keymap.hint(Action::SelectAll)), any).clicked() {
             self.tick_shown();
@@ -195,10 +198,7 @@ impl PodApp {
         if full_button(ui, &label, ticked_count > 0 && !busy).clicked() {
             self.download_ticked();
         }
-        let label = match total {
-            1 => format!("Download the 1 episode{}", self.keymap.hint(Action::DownloadAll)),
-            n => format!("Download all {n} episodes{}", self.keymap.hint(Action::DownloadAll)),
-        };
+        let label = format!("Download {}{}", all_episodes(total), self.keymap.hint(Action::DownloadAll));
         if full_button(ui, &label, total > 0 && !busy).clicked() {
             self.download_all();
         }
@@ -210,15 +210,15 @@ impl PodApp {
         // every episode being copied every frame.
         let url = self.library.feeds[self.selected].url.clone();
         let Some(podcast) = self.podcasts.remove(&url) else { return };
-        self.episode_list(ui, &url, &podcast);
+        self.episode_list(ui, &url, &podcast, &shown);
         self.podcasts.insert(url, podcast);
     }
 
     /// The episodes matching the filter, each with a box to tick. Every row
     /// is drawn, even those scrolled out of sight, so screen readers can
     /// reach them all.
-    fn episode_list(&mut self, ui: &mut Ui, url: &str, podcast: &Podcast) {
-        let shown: Vec<&Episode> = matching(podcast, &self.filter).collect();
+    fn episode_list(&mut self, ui: &mut Ui, url: &str, podcast: &Podcast, shown: &[usize]) {
+        let shown: Vec<&Episode> = shown.iter().filter_map(|i| podcast.episodes.get(*i)).collect();
         if shown.is_empty() {
             ui.label("No episode titles match the filter.");
             self.drop_episode_focus();
@@ -273,10 +273,12 @@ impl PodApp {
     }
 }
 
-/// The podcast's episodes whose titles contain `filter`, ignoring case.
-fn matching<'a>(podcast: &'a Podcast, filter: &str) -> impl Iterator<Item = &'a Episode> {
+/// The podcast's episodes whose titles contain `filter`, ignoring case,
+/// with where each is in its list.
+fn matching<'a>(podcast: Option<&'a Podcast>, filter: &str) -> impl Iterator<Item = (usize, &'a Episode)> {
     let filter = filter.trim().to_lowercase();
-    podcast.episodes.iter().filter(move |e| filter.is_empty() || e.title.to_lowercase().contains(&filter))
+    let episodes = podcast.map_or(&[][..], |p| &p.episodes[..]);
+    episodes.iter().enumerate().filter(move |(_, e)| filter.is_empty() || e.title.to_lowercase().contains(&filter))
 }
 
 /// An episode's line in the list: title, when it came out in local time,

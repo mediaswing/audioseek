@@ -120,16 +120,20 @@ impl Settings {
         self.shortcuts_on.unwrap_or(true)
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
+    /// Saves the settings, and says whether it did: not if the file
+    /// couldn't be read at startup (see `load_error`), so it isn't saved
+    /// over.
+    pub fn save(&self) -> std::io::Result<bool> {
         self.save_to(&crate::paths::settings_file())
     }
 
-    fn save_to(&self, path: &Path) -> std::io::Result<()> {
+    fn save_to(&self, path: &Path) -> std::io::Result<bool> {
         if self.load_error.is_some() {
-            return Err(std::io::Error::other("the settings file couldn't be read, so it isn't saved over"));
+            return Ok(false);
         }
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        crate::paths::write_atomic(path, &json)
+        crate::paths::write_atomic(path, &json)?;
+        Ok(true)
     }
 }
 
@@ -145,7 +149,7 @@ mod tests {
         let settings = Settings::load_from(&path);
         assert!(settings.load_notice.is_some());
         assert!(!path.exists());
-        settings.save_to(&path).unwrap();
+        assert!(settings.save_to(&path).unwrap());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2, "the damaged copy is kept");
     }
 
@@ -157,7 +161,7 @@ mod tests {
         std::fs::create_dir(&blocked).unwrap();
         let settings = Settings::load_from(&blocked);
         assert!(settings.load_error.is_some());
-        assert!(settings.save_to(&blocked).is_err());
+        assert!(!settings.save_to(&blocked).unwrap(), "not saved");
         assert!(blocked.is_dir());
     }
 
