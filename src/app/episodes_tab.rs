@@ -178,29 +178,25 @@ impl PodApp {
             matching(self.current_podcast().and_then(|(_, p)| p), &self.filter).map(|(i, _)| i).collect();
         let any = !shown.is_empty();
         let ticked_count = self.ticked_here().map_or(0, |t| t.len());
-        if full_button(ui, &format!("Tick every episode shown{}", self.keymap.hint(Action::SelectAll)), any).clicked() {
-            self.tick_shown();
-        }
-        if full_button(ui, &format!("Untick every episode{}", self.keymap.hint(Action::SelectNone)), ticked_count > 0)
-            .clicked()
-        {
-            self.untick_all();
-        }
-        if full_button(ui, &format!("Tick the episodes not yet downloaded{}", self.keymap.hint(Action::SelectNew)), any)
-            .clicked()
-        {
-            self.tick_new();
-        }
-        let label = match ticked_count {
-            1 => format!("Download the ticked episode{}", self.keymap.hint(Action::DownloadSelected)),
-            n => format!("Download the {n} ticked episodes{}", self.keymap.hint(Action::DownloadSelected)),
-        };
-        if full_button(ui, &label, ticked_count > 0 && !busy).clicked() {
-            self.download_ticked();
-        }
-        let label = format!("Download {}{}", all_episodes(total), self.keymap.hint(Action::DownloadAll));
-        if full_button(ui, &label, total > 0 && !busy).clicked() {
-            self.download_all();
+        let tick_all = format!("Tick all{}", self.keymap.hint(Action::SelectAll));
+        let untick_all = format!("Untick all{}", self.keymap.hint(Action::SelectNone));
+        let tick_new = format!("Tick new{}", self.keymap.hint(Action::SelectNew));
+        let download = format!("Download{}", self.keymap.hint(Action::DownloadSelected));
+        let download_all = format!("Download all{}", self.keymap.hint(Action::DownloadAll));
+        let buttons = [
+            (tick_all.as_str(), any),
+            (&untick_all, ticked_count > 0),
+            (&tick_new, any),
+            (&download, ticked_count > 0 && !busy),
+            (&download_all, total > 0 && !busy),
+        ];
+        match button_row(ui, &buttons) {
+            Some(0) => self.tick_shown(),
+            Some(1) => self.untick_all(),
+            Some(2) => self.tick_new(),
+            Some(3) => self.download_ticked(),
+            Some(4) => self.download_all(),
+            _ => {}
         }
 
         ui.add_space(6.0);

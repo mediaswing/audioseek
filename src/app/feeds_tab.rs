@@ -162,14 +162,13 @@ impl PodApp {
     pub(super) fn feeds_tab(&mut self, ui: &mut Ui) {
         heading(ui, "Feeds");
         let busy = self.is_busy();
-        if full_button(ui, &format!("Import an OPML file…{}", self.keymap.hint(Action::ImportOpml)), true).clicked() {
-            self.import_opml();
-        }
         let has_feeds = !self.library.feeds.is_empty();
-        if full_button(ui, &format!("Export the feeds as OPML…{}", self.keymap.hint(Action::ExportOpml)), has_feeds)
-            .clicked()
-        {
-            self.export_opml();
+        let import = format!("Import OPML…{}", self.keymap.hint(Action::ImportOpml));
+        let export = format!("Export OPML…{}", self.keymap.hint(Action::ExportOpml));
+        match button_row(ui, &[(&import, true), (&export, has_feeds)]) {
+            Some(0) => self.import_opml(),
+            Some(_) => self.export_opml(),
+            None => {}
         }
 
         let label = format!("Add a feed by its address{}, then press Enter", self.keymap.hint(Action::FeedAddress));
@@ -178,27 +177,23 @@ impl PodApp {
         self.focus_if_wanted(Target::FeedAddress, &resp);
         let entered = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         let add_enabled = !self.feed_address.trim().is_empty();
-        let clicked = full_button(ui, "Add feed", add_enabled).clicked();
-        if add_enabled && entered || clicked {
-            self.add_feed();
-        }
-
         let selected_name = self.library.feeds.get(self.selected).map(|f| f.name().to_owned());
         let enabled = selected_name.is_some() && !busy;
-        if full_button(ui, &format!("Fetch the selected feed{}", self.keymap.hint(Action::RefreshFeed)), enabled)
-            .clicked()
-        {
-            self.fetch_selected();
+        let fetch = format!("Fetch feed{}", self.keymap.hint(Action::RefreshFeed));
+        let fetch_all = format!("Fetch all{}", self.keymap.hint(Action::RefreshAll));
+        let remove = format!("Remove{}", self.keymap.hint(Action::RemoveFeed));
+        let clicked = button_row(
+            ui,
+            &[("Add feed", add_enabled), (&fetch, enabled), (&fetch_all, has_feeds && !busy), (&remove, enabled)],
+        );
+        if add_enabled && entered || clicked == Some(0) {
+            self.add_feed();
         }
-        if full_button(ui, &format!("Fetch every feed{}", self.keymap.hint(Action::RefreshAll)), has_feeds && !busy)
-            .clicked()
-        {
-            self.fetch_all();
-        }
-        if full_button(ui, &format!("Remove the selected feed{}", self.keymap.hint(Action::RemoveFeed)), enabled)
-            .clicked()
-        {
-            self.remove_feed();
+        match clicked {
+            Some(1) => self.fetch_selected(),
+            Some(2) => self.fetch_all(),
+            Some(3) => self.remove_feed(),
+            _ => {}
         }
 
         ui.add_space(6.0);

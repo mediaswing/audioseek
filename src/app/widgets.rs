@@ -64,6 +64,38 @@ pub(super) fn full_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Respo
     ui.add_enabled_ui(enabled, |ui| ui.add_sized([ui.available_width(), CONTROL_HEIGHT], Button::new(text))).inner
 }
 
+/// Buttons side by side, each an equal share of the width, given as their
+/// labels and whether they're enabled. Returns the index of the one clicked.
+/// A label too long for its share wraps rather than spilling into the next,
+/// and every button in the row grows to the height of the tallest.
+pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, bool)]) -> Option<usize> {
+    // Laid out here the way `columns` and the buttons will, to find the
+    // tallest wrapped label before any button is drawn.
+    let n = buttons.len() as f32;
+    let width = (ui.available_width() - ui.spacing().item_spacing.x * (n - 1.0)) / n;
+    let padding = ui.spacing().button_padding;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let height = buttons
+        .iter()
+        .map(|(text, _)| {
+            let galley = ui
+                .fonts_mut(|f| f.layout(text.to_string(), font.clone(), Color32::PLACEHOLDER, width - 2.0 * padding.x));
+            galley.size().y + 2.0 * padding.y
+        })
+        .fold(CONTROL_HEIGHT, f32::max);
+    let mut clicked = None;
+    ui.columns(buttons.len(), |cols| {
+        for (i, (col, (text, enabled))) in cols.iter_mut().zip(buttons).enumerate() {
+            let size = egui::vec2(col.available_width(), height);
+            let resp = col.add_enabled(*enabled, Button::new(*text).wrap().min_size(size));
+            if resp.clicked() {
+                clicked = Some(i);
+            }
+        }
+    });
+    clicked
+}
+
 /// A labelled, full-width, one-line text box. `id` keeps it the same box
 /// whatever its label says, so focus can find it.
 pub(super) fn text_field(ui: &mut Ui, id: Id, label: &str, value: &mut String, editable: bool) -> egui::Response {
