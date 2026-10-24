@@ -108,6 +108,9 @@ struct Job {
     saved: usize,
     already: usize,
     failed: Vec<String>,
+    /// Fetching a feed because it was shown, rather than because the user
+    /// asked, so it finishes without the success sound.
+    automatic: bool,
 }
 
 pub struct PodApp {
@@ -327,6 +330,7 @@ impl PodApp {
             saved: 0,
             already: 0,
             failed: Vec::new(),
+            automatic: false,
         });
         self.progress = 0.0;
         cancel
@@ -354,11 +358,19 @@ impl PodApp {
 
     /// Fetches the feeds at `urls` in the background.
     fn fetch(&mut self, urls: Vec<String>) {
+        self.start_fetch(urls, false);
+    }
+
+    /// As `fetch`. `automatic` says it wasn't asked for (see `Job`).
+    fn start_fetch(&mut self, urls: Vec<String>, automatic: bool) {
         if urls.is_empty() || self.refuse_if_busy() {
             return;
         }
         let count = urls.len();
         let cancel = self.start_job(JobKind::Fetching, count);
+        if let Some(job) = &mut self.job {
+            job.automatic = automatic;
+        }
         self.announce(format!("Fetching {}…", plural(count, "feed")));
         self.rep.spawn(worker::Job::Fetch, move |rep| worker::refresh(rep, urls, cancel));
     }
@@ -368,7 +380,7 @@ impl PodApp {
             match msg {
                 Msg::FeedFetched(url, result) => self.feed_fetched(url, result),
                 Msg::RefreshDone { fetched, failed, cancelled } => {
-                    self.job = None;
+                    let automatic = self.job.take().is_some_and(|j| j.automatic);
                     self.save_library_if_changed();
                     let mut text = format!("Fetched {}.", plural(fetched, "feed"));
                     if failed > 0 {
@@ -378,7 +390,7 @@ impl PodApp {
                         text = format!("Cancelled. {text}");
                     } else if failed > 0 {
                         self.cues.play(Cue::Failure);
-                    } else if fetched > 0 {
+                    } else if fetched > 0 && !automatic {
                         self.cues.play(Cue::Success);
                     }
                     self.announce(text);
@@ -467,9 +479,7 @@ impl PodApp {
             worker::Job::Fetch | worker::Job::Download => {
                 self.job = None;
                 self.save_library_if_changed();
-                if job == worker::Job::Fetch {
-                    self.cues.play(Cue::Failure);
-                }
+                self.cues.play(Cue::Failure);
                 let what = if job == worker::Job::Fetch { "Fetching feeds" } else { "Downloading" };
                 self.show_error(format!(
                     "{what} stopped with an error. Anything finished before then has been kept. The log file, {}, \
@@ -491,6 +501,10 @@ impl PodApp {
         if cancelled {
             text = format!("Cancelled. {text}");
             self.cues.play(Cue::Cancelled);
+        } else if !job.failed.is_empty() {
+            self.cues.play(Cue::Failure);
+        } else if job.saved > 0 {
+            self.cues.play(Cue::Success);
         }
         if job.failed.is_empty() {
             self.announce(text);

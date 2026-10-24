@@ -127,7 +127,8 @@ impl PodApp {
     }
 
     /// Fetches the chosen feed if it hasn't been this session, so its
-    /// episodes can be listed.
+    /// episodes can be listed. Shown rather than asked for, it finishes
+    /// without the success sound.
     pub(super) fn fetch_if_needed(&mut self) {
         if let Some(feed) = self.library.feeds.get(self.selected)
             && !feed.disabled
@@ -136,7 +137,7 @@ impl PodApp {
             && !self.is_busy()
         {
             let url = feed.url.clone();
-            self.fetch(vec![url]);
+            self.start_fetch(vec![url], true);
         }
     }
 

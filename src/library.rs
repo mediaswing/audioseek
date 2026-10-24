@@ -156,7 +156,7 @@ impl Library {
             return Ok(false);
         }
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        crate::paths::write_atomic(path, &json)?;
+        crate::paths::write_private(path, &json)?;
         Ok(true)
     }
 

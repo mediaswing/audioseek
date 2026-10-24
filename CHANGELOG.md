@@ -4,7 +4,7 @@
 
 ### Added
 
-- A sound plays when a fetch finishes: one when every feed was fetched, another when any couldn't be. Cancelling downloads plays a sound of its own. On Linux, the Ubuntu package now depends on ALSA for these.
+- A sound plays when a fetch or a batch of downloads finishes: one when everything worked, another when anything failed. Cancelling downloads plays a sound of its own. A feed fetched just because it was shown on the Episodes tab plays no success sound, so moving between tabs and feeds stays quiet. On Linux, the Ubuntu package now depends on ALSA for these.
 
 ### Changed
 
@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- An exported OPML file could be read only by its owner on Linux and macOS, and saving over a file reset its permissions. New files now get the usual permissions, and a file saved over keeps its own.
+- An exported OPML file could be read only by its owner on Linux and macOS, and exporting over a file reset its permissions. New files now get the usual permissions, and a file saved over keeps its own. `feeds.json` and `settings.json` stay readable by the user alone.
 
 ## [1.1.0] - 2026-10-24
 

@@ -65,23 +65,35 @@ pub fn back_up_damaged(path: &Path) -> std::io::Result<PathBuf> {
 /// over it, so a crash part way through never leaves it half written.
 /// A file replaced keeps its permissions; a new one gets the usual ones.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(path, contents, false)
+}
+
+/// As `write_atomic`, for the app's own files: on Linux and macOS only the
+/// user can read them, as feed addresses can have keys in them.
+pub fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(path, contents, true)
+}
+
+fn write_atomic_with(path: &Path, contents: &[u8], private: bool) -> std::io::Result<()> {
     use std::io::Write;
     let dir = path.parent().ok_or_else(|| std::io::Error::other("file has no parent folder"))?;
     std::fs::create_dir_all(dir)?;
     let mut builder = tempfile::Builder::new();
-    // Temporary files are otherwise readable by their owner alone, which an
-    // exported OPML file, or one saved over, shouldn't be. The umask still
-    // applies, as it does to any new file.
+    // Temporary files are readable by their owner alone, which an exported
+    // OPML file, or one saved over, shouldn't be. The umask still applies,
+    // as it does to any new file.
     #[cfg(unix)]
-    {
+    if !private {
         use std::os::unix::fs::PermissionsExt;
         builder.permissions(std::fs::Permissions::from_mode(0o666));
     }
     let mut tmp = builder.tempfile_in(dir)?;
     #[cfg(unix)]
-    if let Ok(old) = std::fs::metadata(path) {
+    if !private && let Ok(old) = std::fs::metadata(path) {
         tmp.as_file().set_permissions(old.permissions())?;
     }
+    #[cfg(not(unix))]
+    let _ = private;
     tmp.write_all(contents)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
@@ -123,5 +135,10 @@ mod tests {
         super::write_atomic(&kept, b"new").unwrap();
         assert_eq!(mode(&kept), 0o640);
         assert_eq!(std::fs::read(&kept).unwrap(), b"new");
+        // The app's own files are the user's alone, even one that wasn't.
+        super::write_private(&kept, b"private").unwrap();
+        assert_eq!(mode(&kept), 0o600);
+        super::write_private(&dir.path().join("settings.json"), b"new").unwrap();
+        assert_eq!(mode(&dir.path().join("settings.json")), 0o600);
     }
 }
