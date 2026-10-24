@@ -87,7 +87,11 @@ pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, bool)]) -> Option<usize>
     ui.columns(buttons.len(), |cols| {
         for (i, (col, (text, enabled))) in cols.iter_mut().zip(buttons).enumerate() {
             let size = egui::vec2(col.available_width(), height);
-            let resp = col.add_enabled(*enabled, Button::new(*text).wrap().min_size(size));
+            // A button aligns its label, and the label its wrapped lines, by
+            // the layout it's in, which `columns` leaves on the left.
+            let button = Button::new(*text).wrap().min_size(size);
+            let centred = egui::Layout::top_down(egui::Align::Center);
+            let resp = col.with_layout(centred, |ui| ui.add_enabled(*enabled, button)).inner;
             if resp.clicked() {
                 clicked = Some(i);
             }
