@@ -167,8 +167,8 @@ impl PodApp {
         let export = format!("Export OPML…{}", self.keymap.hint(Action::ExportOpml));
         match button_row(ui, &[(&import, true), (&export, has_feeds)]) {
             Some(0) => self.import_opml(),
-            Some(_) => self.export_opml(),
-            None => {}
+            Some(1) => self.export_opml(),
+            _ => {}
         }
 
         let label = format!("Add a feed by its address{}, then press Enter", self.keymap.hint(Action::FeedAddress));

@@ -27,55 +27,65 @@ impl Cue {
 /// waits for the audio device.
 #[derive(Default)]
 pub struct Cues {
-    /// How many cues have been started, and the one now playing. A cue whose
-    /// number is out of date by the time its audio device opens is not
-    /// played, so a newer cue always wins.
-    current: Arc<Mutex<(u64, Option<Arc<rodio::Player>>)>>,
+    current: Arc<Mutex<Playing>>,
+}
+
+#[derive(Default)]
+struct Playing {
+    /// How many cues have been started. A cue whose number is out of date by
+    /// the time its audio device opens is not played, so a newer cue always
+    /// wins.
+    started: u64,
+    /// The cue now playing, if any.
+    player: Option<Arc<rodio::Player>>,
 }
 
 impl Cues {
     pub fn play(&self, cue: Cue) {
-        let Some(number) = self.stop() else { return };
+        let number = self.stop();
         let current = self.current.clone();
-        std::thread::spawn(move || {
-            let result = (|| -> anyhow::Result<()> {
-                let mut device =
-                    rodio::DeviceSinkBuilder::open_default_sink().context("no audio output device is available")?;
-                device.log_on_drop(false);
-                let player = Arc::new(rodio::Player::connect_new(device.mixer()));
-                let decoder = rodio::Decoder::try_from(Cursor::new(cue.bytes()))?;
-                {
-                    let Ok(mut slot) = current.lock() else { return Ok(()) };
-                    if slot.0 != number {
-                        return Ok(());
-                    }
-                    slot.1 = Some(player.clone());
-                    player.append(decoder);
-                }
-                player.sleep_until_end();
-                if let Ok(mut slot) = current.lock()
-                    && slot.0 == number
-                {
-                    slot.1 = None;
-                }
-                Ok(())
-            })();
-            if let Err(e) = result {
+        let spawned = std::thread::Builder::new().name("sound".to_owned()).spawn(move || {
+            if let Err(e) = play(cue, number, &current) {
                 log::warn!("could not play the {cue:?} sound: {e:#}");
             }
         });
+        if let Err(e) = spawned {
+            log::warn!("could not start the sound thread: {e}");
+        }
     }
 
     /// Cuts off the cue now playing or about to play. Returns the number the
     /// next cue should have.
-    fn stop(&self) -> Option<u64> {
-        let mut slot = self.current.lock().ok()?;
-        slot.0 += 1;
-        if let Some(player) = slot.1.take() {
+    fn stop(&self) -> u64 {
+        let mut playing = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        playing.started += 1;
+        if let Some(player) = playing.player.take() {
             player.stop();
         }
-        Some(slot.0)
+        playing.started
     }
+}
+
+/// Plays `cue`, cue `number`, to the end, unless a newer one has started.
+fn play(cue: Cue, number: u64, current: &Mutex<Playing>) -> anyhow::Result<()> {
+    let mut device = rodio::DeviceSinkBuilder::open_default_sink().context("no audio output device is available")?;
+    device.log_on_drop(false);
+    let player = Arc::new(rodio::Player::connect_new(device.mixer()));
+    let decoder = rodio::Decoder::try_from(Cursor::new(cue.bytes())).context("the sound is damaged")?;
+    {
+        let mut playing = current.lock().unwrap_or_else(|e| e.into_inner());
+        if playing.started != number {
+            return Ok(());
+        }
+        playing.player = Some(player.clone());
+        player.append(decoder);
+    }
+    player.sleep_until_end();
+    let mut playing = current.lock().unwrap_or_else(|e| e.into_inner());
+    if playing.started == number {
+        playing.player = None;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

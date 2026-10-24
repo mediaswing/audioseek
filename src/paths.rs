@@ -63,11 +63,25 @@ pub fn back_up_damaged(path: &Path) -> std::io::Result<PathBuf> {
 
 /// Writes a file atomically: to a temporary file beside it, then renamed
 /// over it, so a crash part way through never leaves it half written.
+/// A file replaced keeps its permissions; a new one gets the usual ones.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let dir = path.parent().ok_or_else(|| std::io::Error::other("file has no parent folder"))?;
     std::fs::create_dir_all(dir)?;
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    let mut builder = tempfile::Builder::new();
+    // Temporary files are otherwise readable by their owner alone, which an
+    // exported OPML file, or one saved over, shouldn't be. The umask still
+    // applies, as it does to any new file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    let mut tmp = builder.tempfile_in(dir)?;
+    #[cfg(unix)]
+    if let Ok(old) = std::fs::metadata(path) {
+        tmp.as_file().set_permissions(old.permissions())?;
+    }
     tmp.write_all(contents)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
@@ -89,5 +103,25 @@ mod tests {
         for (i, backup) in backups.iter().enumerate() {
             assert_eq!(std::fs::read_to_string(backup).unwrap(), format!("damaged {i}"));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_keeps_the_usual_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        // As a new file would have, not only its owner's.
+        let new = dir.path().join("podcasts.opml");
+        super::write_atomic(&new, b"new").unwrap();
+        std::fs::write(dir.path().join("plain"), b"").unwrap();
+        assert_eq!(mode(&new), mode(&dir.path().join("plain")));
+        // A file saved over keeps its own.
+        let kept = dir.path().join("feeds.json");
+        std::fs::write(&kept, b"old").unwrap();
+        std::fs::set_permissions(&kept, std::fs::Permissions::from_mode(0o640)).unwrap();
+        super::write_atomic(&kept, b"new").unwrap();
+        assert_eq!(mode(&kept), 0o640);
+        assert_eq!(std::fs::read(&kept).unwrap(), b"new");
     }
 }

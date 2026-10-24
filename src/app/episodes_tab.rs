@@ -183,14 +183,17 @@ impl PodApp {
         let tick_new = format!("Tick new{}", self.keymap.hint(Action::SelectNew));
         let download = format!("Download{}", self.keymap.hint(Action::DownloadSelected));
         let download_all = format!("Download all{}", self.keymap.hint(Action::DownloadAll));
-        let buttons = [
-            (tick_all.as_str(), any),
-            (&untick_all, ticked_count > 0),
-            (&tick_new, any),
-            (&download, ticked_count > 0 && !busy),
-            (&download_all, total > 0 && !busy),
-        ];
-        match button_row(ui, &buttons) {
+        let buttons = button_row(
+            ui,
+            &[
+                (&tick_all, any),
+                (&untick_all, ticked_count > 0),
+                (&tick_new, any),
+                (&download, ticked_count > 0 && !busy),
+                (&download_all, total > 0 && !busy),
+            ],
+        );
+        match buttons {
             Some(0) => self.tick_shown(),
             Some(1) => self.untick_all(),
             Some(2) => self.tick_new(),

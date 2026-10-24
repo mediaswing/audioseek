@@ -78,7 +78,7 @@ pub fn download(
         {
             bail!("the download ended early");
         }
-        file.sync_all()?;
+        file.sync_all().with_context(|| format!("could not write {}", part.display()))?;
         drop(file);
         std::fs::rename(&part, dest).with_context(|| format!("could not save {}", dest.display()))
     })();

@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- A sound plays when a fetch finishes: one when every feed was fetched, another when any couldn't be. Cancelling downloads plays a sound of its own. On Linux, the Ubuntu package now depends on ALSA for these.
+
+### Changed
+
+- The buttons on the Feeds and Episodes tabs sit side by side, with shorter labels.
+
+### Fixed
+
+- An exported OPML file could be read only by its owner on Linux and macOS, and saving over a file reset its permissions. New files now get the usual permissions, and a file saved over keeps its own.
+
 ## [1.1.0] - 2026-10-24
 
 ### Added
