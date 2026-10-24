@@ -16,6 +16,7 @@ mod package;
 mod paths;
 mod settings;
 mod shortcuts;
+mod sound;
 mod text;
 mod update;
 mod worker;

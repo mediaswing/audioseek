@@ -23,6 +23,7 @@ use crate::feed::Podcast;
 use crate::library::Library;
 use crate::settings::Settings;
 use crate::shortcuts::{self, Action, Command, KeyContext, Keymap, Platform, Shortcut};
+use crate::sound::{Cue, Cues};
 use crate::worker::{self, Msg, Outcome, Reporter};
 use egui::accesskit::{Live, Role};
 use egui::{Button, Color32, EventFilter, Id, Key, Modifiers, RichText, Ui};
@@ -145,6 +146,8 @@ pub struct PodApp {
     checking_for_update: bool,
     /// When the list of feeds is next saved while feeds are fetched.
     library_save: SaveSchedule,
+    /// The success, failure and cancelled sounds.
+    cues: Cues,
 }
 
 /// When to save `feeds.json` while feeds are being fetched: not after every
@@ -220,6 +223,7 @@ impl PodApp {
             tab_buttons: Vec::new(),
             new_version: None,
             library_save: SaveSchedule::default(),
+            cues: Cues::default(),
         };
         if !problems.is_empty() {
             app.show_error(problems.join("\n\n"));
@@ -372,6 +376,10 @@ impl PodApp {
                     }
                     if cancelled {
                         text = format!("Cancelled. {text}");
+                    } else if failed > 0 {
+                        self.cues.play(Cue::Failure);
+                    } else if fetched > 0 {
+                        self.cues.play(Cue::Success);
                     }
                     self.announce(text);
                 }
@@ -459,6 +467,9 @@ impl PodApp {
             worker::Job::Fetch | worker::Job::Download => {
                 self.job = None;
                 self.save_library_if_changed();
+                if job == worker::Job::Fetch {
+                    self.cues.play(Cue::Failure);
+                }
                 let what = if job == worker::Job::Fetch { "Fetching feeds" } else { "Downloading" };
                 self.show_error(format!(
                     "{what} stopped with an error. Anything finished before then has been kept. The log file, {}, \
@@ -479,6 +490,7 @@ impl PodApp {
         }
         if cancelled {
             text = format!("Cancelled. {text}");
+            self.cues.play(Cue::Cancelled);
         }
         if job.failed.is_empty() {
             self.announce(text);

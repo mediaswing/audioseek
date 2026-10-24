@@ -5,12 +5,12 @@
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
-/// What the window needs: OpenGL, X11 or Wayland keyboard handling, and
-/// zenity, which shows its message boxes and questions (without it, Remove
-/// and Download all can't ask first, so do nothing). Feeds and episodes are
-/// fetched with rustls, so there is no OpenSSL.
-const DEB_DEPENDS: &str =
-    "libc6 (>= 2.35), libgcc-s1, libgl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, zenity";
+/// What the window needs: OpenGL, X11 or Wayland keyboard handling, ALSA for
+/// the sounds, and zenity, which shows its message boxes and questions
+/// (without it, Remove and Download all can't ask first, so do nothing).
+/// Feeds and episodes are fetched with rustls, so there is no OpenSSL.
+const DEB_DEPENDS: &str = "libc6 (>= 2.35), libgcc-s1, libasound2t64 | libasound2, libgl1, libxkbcommon0, \
+libxkbcommon-x11-0, libwayland-client0, zenity";
 /// File dialogs go through the desktop portal; AT-SPI and Orca are how the
 /// window reaches screen readers.
 const DEB_RECOMMENDS: &str = "xdg-desktop-portal, at-spi2-core, orca";

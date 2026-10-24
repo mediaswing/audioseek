@@ -266,9 +266,9 @@ jobs:
       - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: >-
-            pkg-config libxkbcommon-dev libwayland-dev
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
             libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
-          version: 1
+          version: 2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.2
       # Includes src/package/linux.rs's test, which checks a .deb with dpkg-deb.
