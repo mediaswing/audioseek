@@ -78,22 +78,27 @@ fn write_atomic_with(path: &Path, contents: &[u8], private: bool) -> std::io::Re
     use std::io::Write;
     let dir = path.parent().ok_or_else(|| std::io::Error::other("file has no parent folder"))?;
     std::fs::create_dir_all(dir)?;
-    let mut builder = tempfile::Builder::new();
     // Temporary files are readable by their owner alone, which an exported
     // OPML file, or one saved over, shouldn't be. The umask still applies,
-    // as it does to any new file.
+    // as it does to any new file. Windows has no such permissions.
     #[cfg(unix)]
-    if !private {
+    let usual = {
         use std::os::unix::fs::PermissionsExt;
-        builder.permissions(std::fs::Permissions::from_mode(0o666));
-    }
-    let mut tmp = builder.tempfile_in(dir)?;
+        (!private).then(|| std::fs::Permissions::from_mode(0o666))
+    };
+    #[cfg(not(unix))]
+    let usual: Option<std::fs::Permissions> = {
+        let _ = private;
+        None
+    };
+    let mut tmp = match usual {
+        Some(permissions) => tempfile::Builder::new().permissions(permissions).tempfile_in(dir)?,
+        None => tempfile::NamedTempFile::new_in(dir)?,
+    };
     #[cfg(unix)]
     if !private && let Ok(old) = std::fs::metadata(path) {
         tmp.as_file().set_permissions(old.permissions())?;
     }
-    #[cfg(not(unix))]
-    let _ = private;
     tmp.write_all(contents)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
